@@ -95,3 +95,12 @@
 - **决策**：M4 用 `Intent.ACTION_VIEW` 打开带 token 的回环地址，先把"能用"打通；
   内嵌 WebView 作为体验优化排在首装打包（T-10）之后。
 - **证据**：`AndroidSystemBridges.openLocalUrl`；地址由 `KernelId.openUrl(token)` 生成。
+
+## D-023 内核控制台改为应用内 WebView（取代 D-022 的外部浏览器）
+
+- **背景**：外部浏览器会另起一个上下文（token 出现在地址栏、返回键回到桌面），不符合"单 App"体验。
+- **决策**：新增 `KernelWebViewActivity`（`exported=false`），`bridges` 通过 `ComponentName` 拉起，
+  传入 `kernel_url` / `kernel_title`；开启 JS 与 DOM Storage，禁用 file/content 访问；
+  非 `127.0.0.1`/`localhost` 的外链交给系统浏览器。
+- **影响面**：只新增一个 Activity 与桥接实现，不动内核；桌面入口仍只有 MainActivity。
+- **证据**：dsh 控制台在 WebView 中完整渲染（`docs/evidence/m5-dsh-console-webview.png`）。

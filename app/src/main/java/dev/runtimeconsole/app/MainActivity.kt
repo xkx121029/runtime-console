@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
                 },
                 onOpenKernel = { id ->
                     val token = kernels.firstOrNull { it.id == id }?.token
-                    bridges.openLocalUrl(id.openUrl(token))
+                    bridges.openLocalUrl(id.openUrl(token), id.title)
                 },
                 loadLog = { id -> withContext(Dispatchers.IO) { gateway.logTail(id, 200) } },
                 selfTestOutput = selfTestOutput,

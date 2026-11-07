@@ -18,6 +18,7 @@
 | M2 内核启动 | **已完成** | dsh `web` 与 Octop FastAPI 均在设备上返回 HTTP 200 |
 | M3 内核管理 | **已完成** | KernelSupervisor / LoopbackGateway / SystemBridges，App 内起停 + 健康探活 |
 | M4 控制台 UI | **已完成（基础版）** | Compose 单屏：状态/内存/PID/日志/起停/打开（打开带 token） |
+| M5 应用内控制台 | **通过（dsh）/ 部分通过（Octop）** | WebView 加载 dsh 控制台成功；Octop 首启向导后空白（T-11） |
 
 ## M1 结论：**通过（x86_64 模拟器）**
 
@@ -272,15 +273,29 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 - 安装后直接打开即自动拉起两个内核（开关可关，偏好存 `runtime-console/auto-run-kernels`）。
 - 单内核取证：`am start -n dev.runtimeconsole.app/.MainActivity --ez runtime_dsh true`
   （或 `runtime_octop`）；Activity 在前台时同样生效。
-- 「打开」用系统浏览器访问回环地址；「日志」抽屉读 `files/logs/*.log` 尾部 200 行。
+- 「打开」在应用内 WebView 加载内核控制台（dsh 自动带 token）；「日志」抽屉读 `files/logs/*.log` 尾部 200 行。
+
+## M5 结论：**通过（应用内 WebView，单 App 入口）**
+
+「打开」不再跳外部浏览器：`AndroidSystemBridges` 用 `ComponentName` 拉起应用内 `KernelWebViewActivity`
+（`exported=false`，不占桌面入口），由它加载带 token 的回环地址。
+
+| 页面 | 结果 | 证据 |
+|---|---|---|
+| dsh 控制台 | **通过**：Preview Notice 对话框完整渲染，token 鉴权生效 | [evidence/m5-dsh-console-webview.png](evidence/m5-dsh-console-webview.png) |
+| Octop 面板 | **部分通过**：首启向导完整渲染（Password/Database/Admin）；提交引导密码后页面变空白，未定位 | [evidence/m5-octop-setup-webview.png](evidence/m5-octop-setup-webview.png) |
+
+- WebView 页面冷加载（内核同时启动、模拟器争 CPU）：Activity 首帧 +24.8 s，dsh 控制台约 2 分钟后出内容。
+- `GET /`（Octop dashboard）本次实测 **200，len=10310，1.4 s**（热态）；T-08 的 20 s 超时只在冷启动阶段出现。
+- 外链（非 127.0.0.1/localhost）交给系统浏览器，WebView 不变通用浏览器。
 
 ## 下一步（按优先级）
 
 1. **首装体验**：`python-site`（803 MB）与 dsh `node_modules`（701 MB）目前靠脚本侧载，未进 APK（T-10）。
    需要定方案：首次启动下载（分区/断点续传）或随包分卷 —— 这是唯一阻碍“全新设备开箱可用”的项。
-2. `GET /`（Octop dashboard）20 s 超时（T-08）定位。
+2. Octop 首启向导提交密码后空白（T-11）定位：先看 `/setup` 路由返回与 WebView 控制台。
 3. 真机 arm64 验证（T-04）；当前全部证据为 x86_64 模拟器。
-4. 把 dsh 控制台从外部浏览器搬进 App 内 WebView（单 App 体验），需要处理 token 注入与返回键。
+4. WebView 细节：下拉刷新、加载进度、错误页（内核未启动时给出“去启动”引导）。
 
 
 ## 已知坑
@@ -325,9 +340,10 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 | T-05 | `gradlew.bat` 在含 `&` 路径下不可用 | 用 `C:\rc` 联接绕过 |
 | T-06 | 兼容库靠 `sitecustomize.py` 预加载 | 若某扩展用 `ctypes.CDLL("libssl.so.3")` 名字也能命中；但进程内多份同名库会双份内存 |
 | T-07 | 首启解压 15.7MB stdlib 在主线程外的 IO 线程，但无进度条之外反馈 | 首次自检约 20~40s（模拟器） |
-| T-08 | Octop `GET /` 20s 不返回（`/api/*` 正常） | dashboard 页面暂不可用，待定位 |
+| T-08 | Octop `GET /` 冷启动时 20s 不返回（热态 1.4s/200） | dashboard 首次访问需预热，已降级为“等一会儿” |
 | T-09 | Octop 依赖安装目前只有手工 adb 步骤 | 换机不可复现，待写 `scripts/octop-runtime.ps1` |
-| T-10 | `python-site` 803MB，未压缩进 APK | 首启安装耗时/体积待定（M4 前必须决策） |
+| T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 全新设备开箱不可用，必须决策分发方案 |
+| T-11 | Octop 首启向导提交密码后 WebView 页面空白 | 未定位，可能与会话 Cookie / 路由跳转有关 |
 
 ## 验证环境
 

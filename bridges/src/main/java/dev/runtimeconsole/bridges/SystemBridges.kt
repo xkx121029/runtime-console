@@ -6,5 +6,5 @@ package dev.runtimeconsole.bridges
  */
 interface SystemBridges {
     /** 打开一个本机地址（例如内核提供的 Web 控制台）。 */
-    fun openLocalUrl(url: String)
+    fun openLocalUrl(url: String, title: String? = null)
 }

@@ -19,6 +19,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 应用内详情页：加载内核控制台，不导出、不占桌面入口 -->
+        <activity
+            android:name=".KernelWebViewActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:label="@string/app_name" />
     </application>
 
 </manifest>
