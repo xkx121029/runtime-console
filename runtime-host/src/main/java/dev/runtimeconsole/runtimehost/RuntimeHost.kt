@@ -96,14 +96,32 @@ class RuntimeHost(private val context: Context) {
     private fun stagePythonStdlib(onProgress: (String, Int, Int) -> Unit) {
         val stdlib = File(pythonHome, "lib/python3.14")
         if (File(stdlib, "os.py").exists()) return
-        val files = mutableListOf<Pair<String, File>>()
-        collectAssets("python-stdlib", File(pythonHome, "lib/python3.14"), files)
-        files.forEachIndexed { index, (assetPath, target) ->
-            target.parentFile?.mkdirs()
-            context.assets.open(assetPath).use { input -> target.outputStream().use { input.copyTo(it) } }
-            onProgress("解压 Python 标准库", index + 1, files.size)
+        // 用 zip 而不是逐文件 asset：aapt2 会丢弃 `_` 开头的路径（实测 zipfile/_path 丢失，
+        // 导致 import zipfile 失败），zip 内部条目不受该规则影响。
+        val zip = File(runtimeDir, "python-stdlib.zip")
+        // 每次解压都从 APK 重新落盘，避免升级后用到旧的 zip（实测踩过：旧包残留导致
+        // 解出反斜杠文件名、stdlib 目录结构全错）。
+        context.assets.open("python-stdlib.zip").use { input ->
+            zip.outputStream().use { input.copyTo(it) }
         }
-        Log.i(TAG, "Python 标准库解压完成：${files.size} 个文件")
+        java.util.zip.ZipFile(zip).use { archive ->
+            val entries = archive.entries()
+            val total = archive.size()
+            var index = 0
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                val target = File(stdlib, entry.name)
+                if (entry.isDirectory) {
+                    target.mkdirs()
+                    continue
+                }
+                target.parentFile?.mkdirs()
+                archive.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
+                index++
+                onProgress("解压 Python 标准库", index, total)
+            }
+            Log.i(TAG, "Python 标准库解压完成：$index 个文件")
+        }
     }
 
     private fun collectAssets(assetPath: String, target: File, out: MutableList<Pair<String, File>>) {

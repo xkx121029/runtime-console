@@ -105,22 +105,27 @@ if (Test-Path $readelf) {
 $pyStd = Join-Path $TermuxRoot "lib/python$PythonTag"
 if (Test-Path $pyStd) {
     $pyStdAbs = (Resolve-Path $pyStd).Path
+    # 用 zip 资源而不是逐文件 assets：aapt2 的默认忽略规则会丢掉 `_*` 开头的文件/目录
+    # （实测 zipfile/_path 被丢，导致 import zipfile 失败），zip 内条目不受该规则影响，
+    # 同时也把安装时的逐文件复制变成一次顺序解压。
     $assetDst = Join-Path $Assets "python-stdlib"
     if (Test-Path $assetDst) { Remove-Item $assetDst -Recurse -Force }
-    New-Item -ItemType Directory -Force $assetDst | Out-Null
+    $stageStd = Join-Path $PSScriptRoot "..\.tmp\stdlib-stage"
+    if (Test-Path $stageStd) { Remove-Item $stageStd -Recurse -Force }
+    New-Item -ItemType Directory -Force $stageStd | Out-Null
     # 只要纯 Python 与 lib-dynload（C 扩展），排除 __pycache__ / 测试数据
     $copy = Get-ChildItem $pyStdAbs -Recurse -File | Where-Object {
-        $_.Extension -notin @(".pyc", ".pyo") -and $_.FullName -notmatch '__pycache__|/test/|/tests/'
+        $_.Extension -notin @(".pyc", ".pyo") -and $_.FullName -notmatch '__pycache__|[\\/]tests?[\\/]'
     }
     foreach ($f in $copy) {
         $rel = $f.FullName.Substring($pyStdAbs.Length).TrimStart('\')
-        $target = Join-Path $assetDst $rel
+        $target = Join-Path $stageStd $rel
         New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
         Copy-Item $f.FullName $target -Force
     }
-    $sum = (Get-ChildItem $assetDst -Recurse -File | Measure-Object Length -Sum).Sum
-    Write-Output ("STAGE python-stdlib {0} files {1:N1}MB" -f (Get-ChildItem $assetDst -Recurse -File).Count, ($sum/1MB))
-    $dyn = Join-Path $assetDst "lib-dynload"
+    $sum = (Get-ChildItem $stageStd -Recurse -File | Measure-Object Length -Sum).Sum
+    Write-Output ("STAGE python-stdlib {0} files {1:N1}MB" -f (Get-ChildItem $stageStd -Recurse -File).Count, ($sum/1MB))
+    $dyn = Join-Path $stageStd "lib-dynload"
     if (Test-Path $dyn) { Write-Output ("STAGE lib-dynload {0} modules" -f (Get-ChildItem $dyn -File).Count) }
 
     # sitecustomize：解释器启动时把版本化 soname 的库按绝对路径预加载。
@@ -146,8 +151,27 @@ if _lib_dir and os.path.isdir(_lib_dir):
     except Exception as _error:  # noqa: BLE001
         print("compat-preload-failed: %s" % _error, file=sys.stderr)
 '@
-    [System.IO.File]::WriteAllText((Join-Path $assetDst "sitecustomize.py"), $site, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText((Join-Path $stageStd "sitecustomize.py"), $site, (New-Object System.Text.UTF8Encoding($false)))
     Write-Output "STAGE sitecustomize.py"
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    New-Item -ItemType Directory -Force $Assets | Out-Null
+    $zipPath = Join-Path $Assets "python-stdlib.zip"
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+    # 手工建条目：.NET Framework 的 CreateFromDirectory 在 Windows 上用反斜杠做分隔符，
+    # 解压到 Android 会变成带 "\" 的扁平文件名，导致 stdlib 目录结构全错。
+    $stageAbs = (Resolve-Path $stageStd).Path
+    $zip = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($f in Get-ChildItem $stageAbs -Recurse -File) {
+            $rel = $f.FullName.Substring($stageAbs.Length).TrimStart('\').Replace('\', '/')
+            [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip, $f.FullName, $rel, [System.IO.Compression.CompressionLevel]::Optimal)
+        }
+    }
+    finally { $zip.Dispose() }
+    Write-Output ("STAGE python-stdlib.zip {0:N1}MB" -f ((Get-Item $zipPath).Length/1MB))
 } else {
     Write-Output "WARN 未找到 Python 标准库：$pyStd"
 }
