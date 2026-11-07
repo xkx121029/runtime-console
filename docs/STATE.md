@@ -19,6 +19,7 @@
 | M3 内核管理 | **已完成** | KernelSupervisor / LoopbackGateway / SystemBridges，App 内起停 + 健康探活 |
 | M4 控制台 UI | **已完成（基础版）** | Compose 单屏：状态/内存/PID/日志/起停/打开（打开带 token） |
 | M5 应用内控制台 | **通过（dsh）/ 部分通过（Octop）** | WebView 加载 dsh 控制台成功；Octop 首启向导后空白（T-11） |
+| M6 进程保活 | **通过** | 前台服务 `isForeground=true`；退桌面 100 s 后内核仍监听、Octop 仍 200 |
 
 ## M1 结论：**通过（x86_64 模拟器）**
 
@@ -289,11 +290,21 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 - `GET /`（Octop dashboard）本次实测 **200，len=10310，1.4 s**（热态）；T-08 的 20 s 超时只在冷启动阶段出现。
 - 外链（非 127.0.0.1/localhost）交给系统浏览器，WebView 不变通用浏览器。
 
+## M6 结论：**通过（前台保活）**
+
+- 新增 `KernelService`（`foregroundServiceType=specialUse`，`exported=false`），不承载业务，
+  只把进程提到前台优先级；有内核在跑时自动拉起，全部停止后自动关掉。
+- 清单新增 `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_SPECIAL_USE` / `POST_NOTIFICATIONS`。
+- 实测：App 启动约 60 s 后 `dumpsys activity services` 出现 `isForeground=true foregroundId=1001`；
+  按 Home 退到桌面再等 100 s，`libnode_exec.so` / `libpython_exec.so` 仍在，Octop 端口保持
+  LISTEN 且 `GET /api/setup/status` 仍 200。
+- 价值：修复了 T-11 的真实成因 —— 内核是 App 子进程，进程被回收后 WebView 只剩空白页。
+
 ## 下一步（按优先级）
 
 1. **首装体验**：`python-site`（803 MB）与 dsh `node_modules`（701 MB）目前靠脚本侧载，未进 APK（T-10）。
    需要定方案：首次启动下载（分区/断点续传）或随包分卷 —— 这是唯一阻碍“全新设备开箱可用”的项。
-2. Octop 首启向导提交密码后空白（T-11）定位：先看 `/setup` 路由返回与 WebView 控制台。
+2. 复测 T-11：保活到位后重走 Octop 首启向导（输入 `octop-login.txt` 的密码），确认能进主界面。
 3. 真机 arm64 验证（T-04）；当前全部证据为 x86_64 模拟器。
 4. WebView 细节：下拉刷新、加载进度、错误页（内核未启动时给出“去启动”引导）。
 
@@ -343,7 +354,7 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 | T-08 | Octop `GET /` 冷启动时 20s 不返回（热态 1.4s/200） | dashboard 首次访问需预热，已降级为“等一会儿” |
 | T-09 | Octop 依赖安装目前只有手工 adb 步骤 | 换机不可复现，待写 `scripts/octop-runtime.ps1` |
 | T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 全新设备开箱不可用，必须决策分发方案 |
-| T-11 | Octop 首启向导提交密码后 WebView 页面空白 | 未定位，可能与会话 Cookie / 路由跳转有关 |
+| T-11 | Octop 首启向导提交后 WebView 空白 | 已定位为“内核随 App 进程被回收”，加前台保活（M6）后待复测 |
 
 ## 验证环境
 

@@ -104,3 +104,12 @@
   非 `127.0.0.1`/`localhost` 的外链交给系统浏览器。
 - **影响面**：只新增一个 Activity 与桥接实现，不动内核；桌面入口仍只有 MainActivity。
 - **证据**：dsh 控制台在 WebView 中完整渲染（`docs/evidence/m5-dsh-console-webview.png`）。
+
+## D-024 用前台服务保活内核进程，不搬内核所有权
+
+- **背景**：两个内核是 App 进程的子进程；系统回收 App 后端口消失，WebView 变空白（T-11 的真实成因）。
+- **候选**：(a) 把内核搬进独立进程/服务并重做跨进程状态同步；(b) 前台服务仅提升进程优先级。
+- **决策**：选 (b)。`KernelService` 不持有 `KernelSupervisor`，只 `startForeground()`；
+  状态仍由 Activity 里的 supervisor/gateway 提供，避免跨进程序列化与生命周期错配。
+- **代价**：常驻一条低优先级通知（可被用户隐藏）；进程被系统强杀后内核不会自愈重启。
+- **证据**：`dumpsys activity services` → `isForeground=true`；退桌面 100 s 后内核端口与 HTTP 均正常。

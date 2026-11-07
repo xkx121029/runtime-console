@@ -3,6 +3,10 @@
 
     <!-- 本机回环（127.0.0.1）socket 同样需要 INTERNET 权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 内核保活：前台服务 + 通知（Android 13+ 通知需授权，未授权时服务仍可运行） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="false"
@@ -26,6 +30,16 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:label="@string/app_name" />
+
+        <!-- 内核保活：只在前台服务里维持进程优先级，不承载业务 -->
+        <service
+            android:name=".KernelService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="local kernel runtimes kept alive for the developer console" />
+        </service>
     </application>
 
 </manifest>

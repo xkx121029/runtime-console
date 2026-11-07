@@ -35,6 +35,9 @@ class MainActivity : ComponentActivity() {
     /** 已请求启动、还没看到端口的标记：UI 用它显示"启动中"。 */
     private val requested = java.util.concurrent.ConcurrentHashMap.newKeySet<KernelId>()
 
+    /** 前台保活服务是否已拉起（避免每 2 秒重复 startForegroundService）。 */
+    private var keepAlive = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         host = RuntimeHost(applicationContext)
@@ -60,6 +63,12 @@ class MainActivity : ComponentActivity() {
                             status.also { if (it.state == KernelState.RUNNING) requested.remove(it.id) }
                         }
                     }
+                }
+                // 内核是 App 进程的子进程：有内核在跑就提成前台服务，避免后台被回收（T-11）
+                val active = kernels.any { it.state != KernelState.STOPPED }
+                when {
+                    active && !keepAlive -> { keepAlive = true; KernelService.start(this@MainActivity) }
+                    !active && keepAlive -> { keepAlive = false; KernelService.stop(this@MainActivity) }
                 }
             }
 
