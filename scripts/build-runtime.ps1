@@ -141,13 +141,21 @@ _lib_dir = os.environ.get("RUNTIME_COMPAT_LIB_DIR")
 if _lib_dir and os.path.isdir(_lib_dir):
     try:
         import ctypes
-        for _name in sorted(os.listdir(_lib_dir)):
-            if ".so" not in _name:
-                continue
-            try:
-                ctypes.CDLL(os.path.join(_lib_dir, _name), mode=ctypes.RTLD_GLOBAL)
-            except OSError as _error:
-                print("compat-preload-warn: %s: %s" % (_name, _error), file=sys.stderr)
+        _pending = [n for n in sorted(os.listdir(_lib_dir)) if ".so" in n]
+        # 两轮加载：库之间有依赖（libexslt -> libxml2.so.16），按名字排序时被依赖方可能后加载，
+        # 第一轮失败的在第二轮（此时依赖已注册 soname）重试。
+        for _round in range(2):
+            _failed = []
+            for _name in _pending:
+                try:
+                    ctypes.CDLL(os.path.join(_lib_dir, _name), mode=ctypes.RTLD_GLOBAL)
+                except OSError as _error:
+                    _failed.append(_name)
+                    if _round == 1:
+                        print("compat-preload-warn: %s: %s" % (_name, _error), file=sys.stderr)
+            _pending = _failed
+            if not _pending:
+                break
     except Exception as _error:  # noqa: BLE001
         print("compat-preload-failed: %s" % _error, file=sys.stderr)
 '@

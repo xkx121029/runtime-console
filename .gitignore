@@ -41,6 +41,7 @@ run-logs/
 # 由 scripts/build-runtime.ps1 生成，体积大且可由脚本复现（含 Termux 预编译 Node/CPython）
 runtime-host/src/main/jniLibs/**/lib*.so
 runtime-host/src/main/assets/python-stdlib/
+runtime-host/src/main/assets/python-stdlib.zip
 runtime-host/src/main/assets/runtime-libs/
 
 # ---------- 敏感信息 ----------

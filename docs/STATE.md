@@ -15,7 +15,7 @@
 |---|---|---|
 | M0 审计 + 最小可运行验证 | **已完成** | 两个运行时在模拟器上跑通 |
 | M1 运行时打包 | **已完成** | Node / CPython 从 APK `lib/` 启动，HTTP 自请求 200 |
-| M2 内核启动 | 进行中 | dsh `web` 已在设备返回 HTTP 200；Octop 待补原生依赖 |
+| M2 内核启动 | **已完成** | dsh `web` 与 Octop FastAPI 均在设备上返回 HTTP 200 |
 | M3 桥接 | 未开始 | gateway + bridges |
 | M4 UI | 未开始 | 最朴素可用界面 |
 
@@ -147,17 +147,87 @@ GET /?token=<redacted>      → 200, len=40102
 | 设备端解压 | 113 s |
 | `dsh web` 冷启动到打印 URL | 约 25~40 s（模拟器） |
 
+### App 内取证（同一进程树，非 adb shell）
+
+```
+$ adb shell am start -n dev.runtimeconsole.app/.MainActivity --ez runtime_dsh true
+$ adb shell run-as … ps -A -o PID,ARGS | grep libnode_exec
+32026 libnode_exec.so --expose-internals /data/user/0/dev.runtimeconsole.app/files/home/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --host 127.0.0.1 --port 3080
+$ adb forward tcp:13080 tcp:3080 && curl http://127.0.0.1:13080/
+HTTP 401（鉴权生效，服务在线）
+```
+
+技术债：dsh 的访问 URL（含 token）在 App 内**没有**出现在 `files/logs/dsh-web.log` 里（同一命令在 adb shell 下重定向到文件时能打印）。
+原因未定位，暂以 401 作为"服务在线"的证据；待 M3 用端口探测 + 反向代理解决。
+
 ### 已知告警（功能不受影响）
 
 - 首次启动时 `spill-local` 插件因 `os.tmpdir()` 指向 Termux 私有目录而失败。注入 `TMPDIR=filesDir/tmp`
   并确保目录存在后，**0 个插件告警**。这也是 `RuntimeHost.exec()` 里已经注入 `TMPDIR` 的原因。
 
-## 下一步（M2-octop）
+## M2-octop 结论：**通过（x86_64 模拟器，adb exec 路径；尚未进 App 进程）**
 
-1. pydantic-core 2.46.4 没有 android 轮子，已用 Rust + NDK 交叉编译成功（`x86_64-linux-android`，
-   产物 `lib_pydantic_core.so` 6,093,592 bytes，3m01s）。待落到设备验证。
-2. 其余原生依赖（cffi / pyyaml / argon2-cffi-bindings 等）Termux 仓库没有现成包，需同法用 NDK clang 编。
-3. `uvloop` / `httptools` / `watchfiles` / `playwright` / `psycopg[binary]` 判为不可用，裁掉（见 `docs/CUTS.md`）。
+### 依赖落地方式
+
+Python 侧用 Termux CPython 3.14.10 + `files/python-site`（`PYTHONPATH`）安装 Octop 1.0.3b4
+全部依赖，`du -sh` 实测 **803 MB / 319 个顶层条目**（langchain 生态，体积正常）。
+
+| 类别 | 处理方式 | 证据 |
+|---|---|---|
+| 纯 Python 依赖（40+ 个） | `pip download --platform any --only-binary=:all: --python-version 3.14` 取 `py3-none-any` 轮子后解压进 `python-site` | 两批共 53 个包解压成功 |
+| pydantic-core 2.46.4 | Rust + NDK 交叉编译（前一轮产物） | 导入 pydantic 成功 |
+| cffi 2.0.0 | NDK clang 编 `_cffi_backend`，**必须 `-lpython3.14` 链接**，否则 bionic 报 `cannot locate symbol PyExc_ImportError` | `import cryptography.exceptions` → OK |
+| argon2-cffi-bindings 25.1.0 | 先用宿主机 cffi `ffi.emit_c_code()` 生成 `_ffi.c`，再用 NDK clang 编（自带 argon2 源码） | `import argon2` → OK |
+| regex 2026.1.15 | NDK clang 编 `_regex`（PyPI 的 manylinux 版在 bionic 下崩溃） | `import regex` → OK |
+| cryptography 50.0.2 | **换 Termux 版**（Termux 的 cryptography 仍是 cffi 实现，正好对上上面编的 `_cffi_backend`） | 见 DECISIONS D-014 |
+| lxml / Pillow / rpds-py / pycryptodomex | 换 Termux 版 + 补系统库 | `lxml.etree`、`PIL.Image`、`pptx` 均 OK |
+| mcp | **锁 1.30.0**；2.3.0 与本版 Octop 不兼容（`McpError` 被改名） | 见 DECISIONS D-015 |
+
+新增系统库（进 `runtime-host/src/main/assets/runtime-libs/`，全部来自 Termux 仓库同一 x86_64 构建）：
+`libiconv` `libxml2.so.16.1.4` `libxslt` `libexslt` `libtiff` `libjpeg.so.8.3.2` `libopenjp2`
+`libimagequant` `libxcb` `libXau` `libXdmcp` `libwebp` `libwebpdemux` `libwebpmux` `libsharpyuv`。
+
+`sitecustomize.py` 的预加载改为**两轮**：`libexslt` 按字母序早于 `libxml2`，首轮必然失败，
+第二轮在 `libxml2.so.16` 注册后才能成功（改动在 `scripts/build-runtime.ps1`）。
+
+### 实测证据
+
+```
+IMPORT_OK 24.91           # import octop.infra.server（冷）
+SERVER_START_OK 5.71      # OctopServer.start()：SQLite 迁移、仓库、插件、harness
+APP_OK 39.8 routes 69     # build_app(server)
+TOTAL 70.43               # 总计（模拟器，含解释器启动）
+```
+
+HTTP（`adb forward tcp:18080 tcp:18080`，仅监听 `127.0.0.1`）：
+
+```
+GET /api/setup/status  → 200（JSON，初始化向导未完成状态）首次 1.23s
+GET /api/openapi.json  → 503（初始化向导未完成时的预期锁定）
+GET /                 → 20s 超时（dashboard 静态托管待查，见 T-08）
+netstat -ltn          → 仅 127.0.0.1:18080
+```
+
+进程内存：`VmRSS = 255 MB`（`/proc/<pid>/status`）。
+
+### 尚未跑通的依赖（未导入即失败，需在用到时处理）
+
+| 包 | 现象 | 影响 |
+|---|---|---|
+| `tiktoken` | 无模块 → `import langchain_openai` 直接失败 | OpenAI 兼容 provider 不可用（其他 provider 未验） |
+| `sqlite-vec` | 无模块 | 向量检索退化为关键词检索 |
+| `zstandard` | `backend_c` 无法加载 | 压缩/归档相关路径降级 |
+| `Crypto`（pycryptodome） | 只有 `Cryptodome`（pycryptodomex） | 飞书加解密等需 `Crypto` 的路径不可用 |
+
+另：启动日志有一条 `OpenSSL 3's legacy provider failed to load`（不影响 TLS/主流算法）。
+
+## 下一步（M3 之前先收尾）
+
+1. **把这次手工 adb 安装固化成 `scripts/octop-runtime.ps1`**（现在只能靠本文件复现，违反 T-03）。
+2. `tiktoken` / `zstandard` / `Crypto` 三者的取舍写进 `docs/DECISIONS.md` 并落到 CUTS。
+3. 定位 `GET /` 20s 超时（T-08），确认 dashboard 静态资源是否随 wheel 分发。
+4. 然后进 M3：gateway（IM 通道）+ bridges（dsh ↔ Octop 的 HTTP 桥）。
+
 
 ## 已知坑
 
@@ -175,6 +245,14 @@ GET /?token=<redacted>      → 200, len=40102
 9. 模拟器极慢（冷启动 20s+），不可用于性能结论。
 10. `assets` 里空目录会丢失，`AssetManager.list()` 对文件返回空数组，递归时按"空数组=文件"处理。
 11. 每次改 assets 都要重新 `assembleDebug` 并**重装**（不是覆盖运行时目录），否则设备上仍是旧文件。
+12. 本机 `pip` 走 Windows 系统代理，HTTPS 经代理会 `ProxyError`；运行前设 `NO_PROXY=*` 即可。
+    `pip download --platform any --only-binary=:all: --python-version 3.14` 是"只取纯 Python 轮子"的可靠写法。
+13. `adb shell "run-as pkg sh -c '…'"` 在 PowerShell 下会被提前展开/吃掉引号。
+    可靠做法：本地写脚本 → base64 → 设备端 `base64 -d` 落盘再执行（注意用 LF，不能带 CRLF）。
+14. 超过约 100KB 的二进制不能塞进命令行 base64；改 `adb push /data/local/tmp/x` +
+    `adb shell "cat /data/local/tmp/x | run-as pkg sh -c 'cat > files/x'"`（App 自己读不到 `/data/local/tmp`）。
+15. Termux 的 `cryptography` 仍是 **cffi 实现**（不是 Rust）；PyPI 的 manylinux 原生轮子（regex、zstandard）
+    在 bionic 上不能直接用，要么自编要么换 Termux 版。
 
 ## 技术债
 
@@ -187,6 +265,9 @@ GET /?token=<redacted>      → 200, len=40102
 | T-05 | `gradlew.bat` 在含 `&` 路径下不可用 | 用 `C:\rc` 联接绕过 |
 | T-06 | 兼容库靠 `sitecustomize.py` 预加载 | 若某扩展用 `ctypes.CDLL("libssl.so.3")` 名字也能命中；但进程内多份同名库会双份内存 |
 | T-07 | 首启解压 15.7MB stdlib 在主线程外的 IO 线程，但无进度条之外反馈 | 首次自检约 20~40s（模拟器） |
+| T-08 | Octop `GET /` 20s 不返回（`/api/*` 正常） | dashboard 页面暂不可用，待定位 |
+| T-09 | Octop 依赖安装目前只有手工 adb 步骤 | 换机不可复现，待写 `scripts/octop-runtime.ps1` |
+| T-10 | `python-site` 803MB，未压缩进 APK | 首启安装耗时/体积待定（M4 前必须决策） |
 
 ## 验证环境
 

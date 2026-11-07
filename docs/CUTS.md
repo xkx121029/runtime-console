@@ -20,6 +20,10 @@
 | C-14 | 运行时树中的 headers/静态库（`include/`、`lib/*.a`） | 只为编译期服务，运行时不需要 | 无 | 打包时按需再补 |
 | C-15 | dsh 语音输入（`sherpa-onnx-linux-x64`，31.8 MB） | 只有 linux-x64 预编译，无 Android 目标 | 不能本地语音识别 | 后续接 Android `SpeechRecognizer`（新功能） |
 | C-16 | dsh 桌面相关原生包（`@img/sharp-*`、`node-pty` 二进制） | 无 Android 预编译 | 见 C-03 / C-04 | 同 C-03 / C-04 |
+| C-17 | `tiktoken`（Rust 扩展） | 本机 Rust 工具链只剩空壳，重装有 25 分钟熔断风险（D-018） | `import langchain_openai` 失败 → OpenAI 兼容 provider 暂不可用；其他 provider 未验 | 重装 Rust 后按 `x86_64-linux-android` 编；或用兼容层绕过 langchain_openai |
+| C-18 | `sqlite-vec`（C 扩展） | 没有可用的 bionic 构建，`pip` 的轮子是 manylinux | 知识库向量检索退化为关键词检索 | 用 NDK 编 `sqlite-vec`（源码是单文件 C，成本低，优先级中等） |
+| C-19 | `zstandard` 的 C 后端 | manylinux `.so` 在 bionic 上不可用 | 压缩/归档路径降级（`zstandard` 导入失败） | 用 NDK 编 `backend_c`（自带 zstd 源码） |
+| C-20 | `pycryptodome`（`Crypto` 命名空间） | Termux 只有 `pycryptodomex`（`Cryptodome`），两者不能共存 | 需要 `import Crypto` 的加解密路径（飞书回调等）不可用 | 自编 pycryptodome，或在用到处做 `Cryptodome` 别名适配 |
 
 ## 降级（非裁剪，但能力打折）
 
