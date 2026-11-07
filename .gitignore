@@ -1,0 +1,46 @@
+# ---------- 通用 ----------
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.idea/
+.vscode/
+*.iml
+
+# ---------- Android / Gradle ----------
+.gradle/
+build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# ---------- Node ----------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ---------- 运行时产物（构建/验证输出，不入库） ----------
+out/
+artifacts/
+.tmp/
+tmp/
+run-logs/
+
+# ---------- 敏感信息 ----------
+*.env
+.env.*
+!.env.example
+secrets.properties
