@@ -21,6 +21,16 @@
 | D-013 | M0 阶段运行时验证允许把二进制放到 `/data/local/tmp`（非 app data）执行，仅用于证明"能跑"；正式形态必须是 APK `lib/` 目录内的 `lib*.so` 并由 `Runtime.exec` 启动 | 硬性约束"不得在 app data 目录 exec 二进制"；`/data/local/tmp` 是系统临时区，不属于 app data | 验证证据的可迁移性 |
 | D-014 | 两个内核共用一个 App、一个入口；`gateway` 只做本机回环反代与进程编排，不改写业务 | 硬性约束 | 模块划分 |
 
+## 打包形态（M1）
+
+| 编号 | 决策 | 理由 | 影响面 |
+|---|---|---|---|
+| D-030 | 运行时二进制（Node/CPython/依赖库/标准库）**不入 git**，由 `scripts/build-runtime.ps1` 从 Termux 包解包树生成到 `jniLibs/` 与 `assets/`（均已 gitignore） | 100MB+ 二进制进 git 会让仓库不可用；脚本可复现 | 换机需先跑脚本；APK 60.9MB |
+| D-031 | 版本化 soname 的库改名进 `jniLibs`（`libcrypto.so.3`→`libxcrypto.so`），Python C 扩展需要的同名库改为 assets 解压到 `filesDir/runtime/lib` 并由 `sitecustomize.py` 绝对路径预加载 | Android 只解压 `lib*.so`；app namespace 不搜 `LD_LIBRARY_PATH`（实测） | 兼容层成为运行时前提，见 STATE「关键发现」 |
+| D-032 | `packaging.jniLibs.useLegacyPackaging = true` + `android:extractNativeLibs="true"` | 否则库留在 APK 内不可 exec；实测解压后 `-rwxr-xr-x` | APK 体积换可执行性 |
+| D-033 | 编译期不裁剪 ICU（`libxicudata.so` 31.6MB 全留） | Node 的 full-icu 构建需要；裁剪会导致时区/国际化异常 | APK 体积主要来源，后续可评估 `--with-intl=small-icu` 自建 Node |
+| D-034 | 自检用 `--ez runtime_selftest true` 启动附加参数触发，不引入常驻调试开关 | 便于自动化取证，同时不改变正常启动行为 | 仅调试用途 |
+
 ## 产品与命名
 
 | 编号 | 决策 | 理由 |

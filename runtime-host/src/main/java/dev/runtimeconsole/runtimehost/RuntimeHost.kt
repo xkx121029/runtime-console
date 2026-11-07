@@ -62,8 +62,18 @@ class RuntimeHost(private val context: Context) {
     fun prepare(onProgress: (String, Int, Int) -> Unit = { _, _, _ -> }) {
         listOf(home, runtimeDir, pythonHome, compatLibsDir, selftestDir, logsDir, tmpDir).forEach { it.mkdirs() }
         stagePythonStdlib(onProgress)
+        stageSitecustomize()
         stageCompatLibs()
         stageSelftest()
+    }
+
+    /** 兼容层脚本很小，每次启动都覆盖，便于随版本更新。 */
+    private fun stageSitecustomize() {
+        val target = File(pythonHome, "lib/python3.14/sitecustomize.py")
+        target.parentFile?.mkdirs()
+        context.assets.open("python-stdlib/sitecustomize.py").use { input ->
+            target.outputStream().use { input.copyTo(it) }
+        }
     }
 
     /**
@@ -124,7 +134,10 @@ class RuntimeHost(private val context: Context) {
         exec(
             pythonExecutable(),
             listOf(script.absolutePath) + args,
-            mapOf("PYTHONHOME" to pythonHome.absolutePath),
+            mapOf(
+                "PYTHONHOME" to pythonHome.absolutePath,
+                "RUNTIME_COMPAT_LIB_DIR" to compatLibsDir.absolutePath,
+            ),
             timeoutSec,
             "python.log",
         )

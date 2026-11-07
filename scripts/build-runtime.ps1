@@ -122,6 +122,32 @@ if (Test-Path $pyStd) {
     Write-Output ("STAGE python-stdlib {0} files {1:N1}MB" -f (Get-ChildItem $assetDst -Recurse -File).Count, ($sum/1MB))
     $dyn = Join-Path $assetDst "lib-dynload"
     if (Test-Path $dyn) { Write-Output ("STAGE lib-dynload {0} modules" -f (Get-ChildItem $dyn -File).Count) }
+
+    # sitecustomize：解释器启动时把版本化 soname 的库按绝对路径预加载。
+    # 背景：Android 给应用进程的是 classloader-namespace，只搜 APK lib/<abi>/，
+    # LD_LIBRARY_PATH 指向 filesDir 会被过滤，所以 C 扩展的 DT_NEEDED（libz.so.1 等）
+    # 必须先以绝对路径 dlopen 进进程，之后按 soname 命中缓存。
+    $site = @'
+# 兼容层（由 scripts/build-runtime.ps1 生成，勿手改）
+import os
+import sys
+
+_lib_dir = os.environ.get("RUNTIME_COMPAT_LIB_DIR")
+if _lib_dir and os.path.isdir(_lib_dir):
+    try:
+        import ctypes
+        for _name in sorted(os.listdir(_lib_dir)):
+            if ".so" not in _name:
+                continue
+            try:
+                ctypes.CDLL(os.path.join(_lib_dir, _name), mode=ctypes.RTLD_GLOBAL)
+            except OSError as _error:
+                print("compat-preload-warn: %s: %s" % (_name, _error), file=sys.stderr)
+    except Exception as _error:  # noqa: BLE001
+        print("compat-preload-failed: %s" % _error, file=sys.stderr)
+'@
+    [System.IO.File]::WriteAllText((Join-Path $assetDst "sitecustomize.py"), $site, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Output "STAGE sitecustomize.py"
 } else {
     Write-Output "WARN 未找到 Python 标准库：$pyStd"
 }
@@ -134,11 +160,12 @@ Write-Output ("DONE jniLibs {0:N1}MB -> {1}" -f ($total/1MB), $dst)
 # 这些名字无法直接放进 jniLibs。做法是把它们原样打进 assets，首启解压到 filesDir/runtime/lib，
 # 再把该目录加进 LD_LIBRARY_PATH（实测 bionic 允许从 app 数据目录 dlopen 库，只是不允许 exec）。
 $compat = @(
-    "libandroid-posix-semaphore.so", "libandroid-support.so", "libbz2.so.1.0.8", "libexpat.so.1.13.1",
+    "libandroid-posix-semaphore.so", "libbz2.so.1.0.8", "libexpat.so.1.13.1",
     "libgdbm.so", "libgdbm_compat.so", "liblzma.so.5.8.4", "libncursesw.so.6.5", "libpanelw.so.6.5",
-    "libreadline.so.8.3", "libzstd.so.1.5.7", "libz.so.1.4", "libcrypto.so.3", "libssl.so.3",
-    "libffi.so", "libsqlite3.so", "libpython3.14.so"
+    "libreadline.so.8.3", "libzstd.so.1.5.7", "libz.so.1.4", "libcrypto.so.3", "libssl.so.3"
 )
+# 说明：libsqlite3.so / libffi.so / libandroid-support.so / libpython3.14.so 在 jniLibs 里已是同名，
+# 系统会直接从 nativeLibraryDir 找到，无需重复放进兼容目录。
 $compatDst = Join-Path $Assets "runtime-libs"
 if (Test-Path $compatDst) { Remove-Item $compatDst -Recurse -Force }
 New-Item -ItemType Directory -Force $compatDst | Out-Null
