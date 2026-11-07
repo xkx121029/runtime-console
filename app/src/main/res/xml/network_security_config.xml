@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只对本机回环放开明文 HTTP：
+  targetSdk 36 默认禁止明文流量（CleartextNotPermitted），会让 HttpURLConnection 探活
+  dsh 的 http://127.0.0.1:3080 直接抛异常，UI 永远显示“启动中”。这里只放行 127.0.0.1/localhost。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

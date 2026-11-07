@@ -40,8 +40,16 @@ class RuntimeHost(private val context: Context) {
     val pythonHome: File get() = File(runtimeDir, "python")
     val compatLibsDir: File get() = File(runtimeDir, "lib")
     val selftestDir: File get() = File(runtimeDir, "selftest")
+    val launcherDir: File get() = File(runtimeDir, "launcher")
     val logsDir: File get() = File(context.filesDir, "logs")
     val tmpDir: File get() = File(context.cacheDir, "tmp")
+
+    /**
+     * Octop 的依赖安装目录（由 `scripts/octop-runtime.ps1` 写入）。
+     *
+     * 不打进 APK：803MB 的 langchain 生态放进安装包会让首装时间不可接受（见 T-10）。
+     */
+    val pythonSiteDir: File get() = File(context.filesDir, "python-site")
 
     private val nativeDir: File get() = File(context.applicationInfo.nativeLibraryDir)
 
@@ -60,10 +68,37 @@ class RuntimeHost(private val context: Context) {
      * @param onProgress 进度回调（阶段名，当前/总数），用于界面显示
      */
     fun prepare(onProgress: (String, Int, Int) -> Unit = { _, _, _ -> }) {
-        listOf(home, runtimeDir, pythonHome, compatLibsDir, selftestDir, logsDir, tmpDir).forEach { it.mkdirs() }
+        listOf(home, runtimeDir, pythonHome, compatLibsDir, selftestDir, launcherDir, logsDir, tmpDir).forEach { it.mkdirs() }
         stagePythonStdlib(onProgress)
         stageCompatLibs()
         stageSelftest()
+        stageLaunchers()
+    }
+
+    /**
+     * 子进程统一环境变量。
+     *
+     * 只在这里拼一次，`exec`（一次性）和 `KernelSupervisor`（长驻）共用，避免两套环境漂移。
+     */
+    fun baseEnv(): Map<String, String> = mapOf(
+        "HOME" to home.absolutePath,
+        "TMPDIR" to tmpDir.absolutePath,
+        "LD_LIBRARY_PATH" to "${nativeDir.absolutePath}:${compatLibsDir.absolutePath}",
+        "PYTHONDONTWRITEBYTECODE" to "1",
+        "PYTHONHOME" to pythonHome.absolutePath,
+        "PYTHONPATH" to pythonSiteDir.absolutePath,
+        "RUNTIME_COMPAT_LIB_DIR" to compatLibsDir.absolutePath,
+    )
+
+    /** 启动脚本（我们自己写的胶水，不含任何内核业务逻辑），每次启动都覆盖以保证升级生效。 */
+    private fun stageLaunchers() {
+        val names = context.assets.list("launcher") ?: emptyArray()
+        for (name in names) {
+            val target = File(launcherDir, name)
+            context.assets.open("launcher/$name").use { input ->
+                target.outputStream().use { input.copyTo(it) }
+            }
+        }
     }
 
     /**
@@ -194,10 +229,7 @@ class RuntimeHost(private val context: Context) {
             // dsh 把访问 URL 打到 stderr，不合并流会丢日志
             .redirectErrorStream(true)
         builder.environment().apply {
-            put("HOME", home.absolutePath)
-            put("TMPDIR", tmpDir.absolutePath)
-            put("LD_LIBRARY_PATH", "${nativeDir.absolutePath}:${compatLibsDir.absolutePath}")
-            put("PYTHONDONTWRITEBYTECODE", "1")
+            putAll(baseEnv())
             putAll(extraEnv)
         }
 

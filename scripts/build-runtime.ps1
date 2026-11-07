@@ -141,7 +141,19 @@ _lib_dir = os.environ.get("RUNTIME_COMPAT_LIB_DIR")
 if _lib_dir and os.path.isdir(_lib_dir):
     try:
         import ctypes
-        _pending = [n for n in sorted(os.listdir(_lib_dir)) if ".so" in n]
+        # 按依赖层级排序：libxml2 依赖 libiconv，libxslt/libexslt 依赖 libxml2。
+        # 只按字母序会出现 libexslt 早于 libxml2 的必然失败（两轮加载只能兜底，不能根治）。
+        def _rank(name):
+            if name.startswith("libiconv"):
+                return 0
+            if name.startswith("libxml2"):
+                return 1
+            if name.startswith("libxslt"):
+                return 2
+            if name.startswith("libexslt"):
+                return 3
+            return 4
+        _pending = sorted((n for n in os.listdir(_lib_dir) if ".so" in n), key=lambda n: (_rank(n), n))
         # 两轮加载：库之间有依赖（libexslt -> libxml2.so.16），按名字排序时被依赖方可能后加载，
         # 第一轮失败的在第二轮（此时依赖已注册 soname）重试。
         for _round in range(2):

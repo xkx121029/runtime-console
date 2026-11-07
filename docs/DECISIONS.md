@@ -65,3 +65,33 @@
 - **后续选项**（按优先级）：① 重装 Rust 后 `cargo build --target x86_64-linux-android`；
   ② 用 langchain 的 `transformers`/`tokenizers` 计数替身；③ 直连 OpenAI 的兼容层绕过 langchain_openai。
 - **说明**：不做假实现（不写"看起来能数 token"的桩），避免静默产生错误计费/截断。
+
+## D-019 回环明文 HTTP 用 networkSecurityConfig 定向放行
+
+- **背景**：targetSdk 36 默认 `cleartextTrafficPermitted=false`，`HttpURLConnection` 访问
+  `http://127.0.0.1:3080` 直接抛 `CleartextNotPermitted`，UI 永远判不出"在线"。
+- **决策**：新增 `app/src/main/res/xml/network_security_config.xml`，只对 `127.0.0.1`、`localhost`
+  放开明文；不使用全局 `usesCleartextTraffic=true`。
+- **影响面**：仅清单声明，不改任何内核代码；公网访问仍受系统默认策略约束。
+
+## D-020 兼容库按依赖层级排序预加载
+
+- **背景**：D-016 的两轮加载能兜底，但 App 进程内仍报 `libexslt.so: library "libxml2.so.16" not found`。
+- **决策**：`sitecustomize.py` 的预加载顺序改为 `libiconv → libxml2 → libxslt → libexslt → 其余按名字`，
+  仍保留两轮重试。
+- **证据**：重装后 `files/logs/octop-api.log` 无 `compat-preload-warn`；旧日志（含告警）保留为
+  `octop-api.log.1`。
+
+## D-021 App 启动即自动拉起两个内核，冷启动容忍 5 分钟
+
+- **背景**：设备侧验收要求"打开 App 就能用"；但模拟器上并发拉起时 dsh 要 4 分半才监听。
+- **决策**：默认自动拉起（偏好 `runtime-console/auto-run-kernels` 可关）；`LoopbackGateway` 把
+  "进程在跑但端口未通"且启动不足 5 分钟的状态显示为「启动中」，超过则判「异常」。
+- **影响面**：只影响 UI 状态机，不改变内核启动参数；单内核取证仍可用 intent extras 单独拉起。
+
+## D-022 "打开"先走系统浏览器（ACTION_VIEW），内嵌 WebView 留到下一轮
+
+- **背景**：dsh 控制台是完整 Web 应用，内嵌 WebView 要处理 token 注入、返回键、下载/新窗口等。
+- **决策**：M4 用 `Intent.ACTION_VIEW` 打开带 token 的回环地址，先把"能用"打通；
+  内嵌 WebView 作为体验优化排在首装打包（T-10）之后。
+- **证据**：`AndroidSystemBridges.openLocalUrl`；地址由 `KernelId.openUrl(token)` 生成。

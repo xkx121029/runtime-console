@@ -1,6 +1,6 @@
 # 项目状态（STATE）
 
-最后更新：2026-11-08 02:20（Asia/Shanghai）
+最后更新：2026-11-08 07:20（Asia/Shanghai）
 
 ## 当前上游 SHA
 
@@ -16,8 +16,8 @@
 | M0 审计 + 最小可运行验证 | **已完成** | 两个运行时在模拟器上跑通 |
 | M1 运行时打包 | **已完成** | Node / CPython 从 APK `lib/` 启动，HTTP 自请求 200 |
 | M2 内核启动 | **已完成** | dsh `web` 与 Octop FastAPI 均在设备上返回 HTTP 200 |
-| M3 桥接 | 未开始 | gateway + bridges |
-| M4 UI | 未开始 | 最朴素可用界面 |
+| M3 内核管理 | **已完成** | KernelSupervisor / LoopbackGateway / SystemBridges，App 内起停 + 健康探活 |
+| M4 控制台 UI | **已完成（基础版）** | Compose 单屏：状态/内存/PID/日志/起停/打开（打开带 token） |
 
 ## M1 结论：**通过（x86_64 模拟器）**
 
@@ -221,12 +221,66 @@ netstat -ltn          → 仅 127.0.0.1:18080
 
 另：启动日志有一条 `OpenSSL 3's legacy provider failed to load`（不影响 TLS/主流算法）。
 
-## 下一步（M3 之前先收尾）
+## M3 + M4 结论：**通过（App 进程内，x86_64 模拟器）**
 
-1. **把这次手工 adb 安装固化成 `scripts/octop-runtime.ps1`**（现在只能靠本文件复现，违反 T-03）。
-2. `tiktoken` / `zstandard` / `Crypto` 三者的取舍写进 `docs/DECISIONS.md` 并落到 CUTS。
-3. 定位 `GET /` 20s 超时（T-08），确认 dashboard 静态资源是否随 wheel 分发。
-4. 然后进 M3：gateway（IM 通道）+ bridges（dsh ↔ Octop 的 HTTP 桥）。
+### 结构
+
+| 模块 | 职责 |
+|---|---|
+| `core` | `KernelId`（端口/健康路径/日志名）、`KernelEndpointStatus`、`HealthProbe`、dsh token 解析 |
+| `runtime-host` | `RuntimeHost`（二进制/环境/资产）、`KernelSupervisor`（长驻进程：起停/PID/RSS/日志尾/崩溃摘要） |
+| `gateway` | `LoopbackGateway`：把两个内核收敛为 `snapshot()` / `start` / `stop`，**不做反向代理** |
+| `bridges` | `SystemBridges` + `AndroidSystemBridges`：用 `ACTION_VIEW` 打开回环 URL |
+| `ui` | Compose 控制台：状态卡、指标（RSS/运行时长/HTTP/PID）、起停/打开/日志抽屉、自检 |
+| `app` | 唯一入口：装配上述模块、自动拉起、`onNewIntent` 取证入口 |
+
+### 实测证据（2026-11-08 23:09~23:15，同一 App 进程）
+
+自动拉起（`am start -n dev.runtimeconsole.app/.MainActivity`，无 extras）：
+
+```
+ps: 27130 libnode_exec.so   /   27133 libpython_exec.so
+netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
+```
+
+| 内核 | 单内核冷启动 → 监听 | 并发自动拉起 → 监听 | 实测 HTTP | 常驻内存 |
+|---|---|---|---|---|
+| dsh web | ≈110 s | ≈4 min 27 s（与 Octop 同时起，模拟器争 CPU） | `GET /` → 401；`GET /?token=…` → **200，len=40102** | 261 MB |
+| Octop API | ≈97 s（`OCTOP_IMPORT_MS=43492`、`SERVER=60499`、`APP=109897 routes=69`） | ≈110 s（`APP_MS`） | `GET /api/setup/status` → **200，len=230** | 243 MB |
+
+- 上表"内存"为 UI 读到的 `/proc/<pid>/status` VmRSS；Octop 单跑时实测 249 MB。
+- 截图证据：[evidence/m4-console-2of2.png](evidence/m4-console-2of2.png)（2/2 在线，dsh HTTP 401、Octop HTTP 200）。
+- APK：`app-debug.apk` 63,754,897 bytes（x86_64 debug，含两个运行时二进制与 stdlib）。
+
+- dsh 的 token 已从 `files/logs/dsh-web.log`（82 字节：`dsh web: http://127.0.0.1:3080/?token=…`）解析出来，
+  UI 的“打开”会带上 token，不再落到 401 页面。
+- Octop 首启向导密码打印在日志里（一次性），同时落 `~/octop-home/octop-login.txt`。
+
+### 本轮修掉的三个真问题
+
+1. **`am start` 不重启 Activity**：Activity 已在前台时，intent 只走 `onNewIntent`，旧代码没实现 →
+   看起来“启动没生效”。已在 `MainActivity.onNewIntent` 里复用 `handleIntent()`。
+2. **targetSdk 36 默认禁止明文 HTTP**：`HttpURLConnection` 探活 `http://127.0.0.1:…` 直接失败，
+   UI 永远显示“启动中/HTTP —”。已加 `res/xml/network_security_config.xml`，只放行 `127.0.0.1` 与 `localhost`。
+
+3. `sitecustomize.py` 兼容库预加载改为**按依赖层级排序**（`libiconv → libxml2 → libxslt → libexslt`），
+   修复 App 进程内 `compat-preload-warn: libexslt.so … libxml2.so.16 not found`。
+   证据：新日志 `files/logs/octop-api.log` 无该告警，旧日志在 `octop-api.log.1`（1110 B）。
+
+### 使用方式
+
+- 安装后直接打开即自动拉起两个内核（开关可关，偏好存 `runtime-console/auto-run-kernels`）。
+- 单内核取证：`am start -n dev.runtimeconsole.app/.MainActivity --ez runtime_dsh true`
+  （或 `runtime_octop`）；Activity 在前台时同样生效。
+- 「打开」用系统浏览器访问回环地址；「日志」抽屉读 `files/logs/*.log` 尾部 200 行。
+
+## 下一步（按优先级）
+
+1. **首装体验**：`python-site`（803 MB）与 dsh `node_modules`（701 MB）目前靠脚本侧载，未进 APK（T-10）。
+   需要定方案：首次启动下载（分区/断点续传）或随包分卷 —— 这是唯一阻碍“全新设备开箱可用”的项。
+2. `GET /`（Octop dashboard）20 s 超时（T-08）定位。
+3. 真机 arm64 验证（T-04）；当前全部证据为 x86_64 模拟器。
+4. 把 dsh 控制台从外部浏览器搬进 App 内 WebView（单 App 体验），需要处理 token 注入与返回键。
 
 
 ## 已知坑
@@ -253,6 +307,12 @@ netstat -ltn          → 仅 127.0.0.1:18080
     `adb shell "cat /data/local/tmp/x | run-as pkg sh -c 'cat > files/x'"`（App 自己读不到 `/data/local/tmp`）。
 15. Termux 的 `cryptography` 仍是 **cffi 实现**（不是 Rust）；PyPI 的 manylinux 原生轮子（regex、zstandard）
     在 bionic 上不能直接用，要么自编要么换 Termux 版。
+16. Activity 已在前台时 `am start` **不会重跑 onCreate**，intent 只走 `onNewIntent`；
+    验证内核唤起前先 `am force-stop`，或确认代码里实现了 `onNewIntent`。
+17. targetSdk ≥ 28 默认禁明文 HTTP（`CleartextNotPermitted`），回环 `http://127.0.0.1` 也逃不掉；
+    必须用 `network_security_config.xml` 显式放行，否则探活永远返回 null。
+18. 模拟器冷启动极慢：Compose 首帧约 30~45 s，内核冷启动 95~110 s；
+    探活/UI 轮询不要以"几秒内必须响应"为前提。
 
 ## 技术债
 
