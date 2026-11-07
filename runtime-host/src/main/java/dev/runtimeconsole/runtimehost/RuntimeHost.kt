@@ -62,18 +62,8 @@ class RuntimeHost(private val context: Context) {
     fun prepare(onProgress: (String, Int, Int) -> Unit = { _, _, _ -> }) {
         listOf(home, runtimeDir, pythonHome, compatLibsDir, selftestDir, logsDir, tmpDir).forEach { it.mkdirs() }
         stagePythonStdlib(onProgress)
-        stageSitecustomize()
         stageCompatLibs()
         stageSelftest()
-    }
-
-    /** 兼容层脚本很小，每次启动都覆盖，便于随版本更新。 */
-    private fun stageSitecustomize() {
-        val target = File(pythonHome, "lib/python3.14/sitecustomize.py")
-        target.parentFile?.mkdirs()
-        context.assets.open("python-stdlib/sitecustomize.py").use { input ->
-            target.outputStream().use { input.copyTo(it) }
-        }
     }
 
     /**
@@ -161,9 +151,33 @@ class RuntimeHost(private val context: Context) {
         )
 
     /**
+     * 启动 dsh 的 web 内核（M2 取证入口）。
+     *
+     * 必须带 `--expose-internals`：见 `docs/UPSTREAM.md` 补丁 P-01。
+     * 端口固定 `127.0.0.1:3080`（只绑回环）。
+     */
+    fun runDshWeb(timeoutSec: Long = 3600): CommandResult {
+        val dshHome = File(home, "dsh")
+        val entry = File(dshHome, "node_modules/@deepseek-ai/dsh/lib/bin.js")
+        require(entry.exists()) { "未找到 dsh 安装：${entry.absolutePath}" }
+        return exec(
+            nodeExecutable(),
+            listOf(
+                "--expose-internals", entry.absolutePath,
+                "web", "--no-open", "--host", "127.0.0.1", "--port", "3080",
+            ),
+            mapOf("NODE_ENV" to "production"),
+            timeoutSec,
+            "dsh-web.log",
+            workingDir = dshHome,
+        )
+    }
+
+    /**
      * 启动任意运行时命令（M2 启动内核时使用）。
      *
      * @param logName 日志文件名，落在 `filesDir/logs/`
+     * @param workingDir 进程工作目录，默认 `filesDir/home`
      */
     fun exec(
         binary: File,
@@ -171,11 +185,13 @@ class RuntimeHost(private val context: Context) {
         extraEnv: Map<String, String>,
         timeoutSec: Long,
         logName: String,
+        workingDir: File = home,
     ): CommandResult {
         require(binary.exists()) { "运行时文件不存在：${binary.absolutePath}" }
         val command = mutableListOf(binary.absolutePath).apply { addAll(args) }
         val builder = ProcessBuilder(command)
-            .directory(home)
+            .directory(workingDir)
+            // dsh 把访问 URL 打到 stderr，不合并流会丢日志
             .redirectErrorStream(true)
         builder.environment().apply {
             put("HOME", home.absolutePath)
@@ -197,6 +213,8 @@ class RuntimeHost(private val context: Context) {
                     lines.forEach { line ->
                         output.appendLine(line)
                         logWriter.appendLine(line)
+                        // 立即落盘：内核日志（如 dsh 的访问 URL）要在进程仍运行时就能读到
+                        logWriter.flush()
                     }
                 }
             }
