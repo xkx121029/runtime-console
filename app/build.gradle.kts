@@ -12,12 +12,20 @@ android {
         applicationId = "dev.runtimeconsole.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-m0"
+        versionCode = 2
+        versionName = "0.2.0-m1"
     }
 
     buildFeatures {
         compose = true
+    }
+
+    packaging {
+        jniLibs {
+            // 必须让安装器把 lib/<abi>/*.so 解压到 nativeLibraryDir 并赋予执行权限：
+            // AGP 默认 useLegacyPackaging=false（库留在 APK 内直接 mmap），那样就没有可 exec 的文件。
+            useLegacyPackaging = true
+        }
     }
 
     compileOptions {

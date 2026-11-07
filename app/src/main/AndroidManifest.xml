@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 本机回环（127.0.0.1）socket 同样需要 INTERNET 权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
+        android:extractNativeLibs="true"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.RuntimeConsole">
