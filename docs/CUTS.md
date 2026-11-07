@@ -18,6 +18,8 @@
 | C-12 | nodejs-mobile 运行时路线 | 最高只到 Node 18.20.4，而 dsh 使用 `node:sqlite`（Node 22+）：`upstream/deepseek-harness/packages/storage/storage-sqlite/src/unit.ts:11` | 无（改用 Termux 预编译 Node 26.13.0，实测可用） | 不补；若上游未来发布 Node 22+ 预编译再评估 |
 | C-13 | Chaquopy 路线 | Chaquopy 最高 Python 3.13；Termux 已有 3.14.10 预编译且实测可跑，避免私有仓库与 Gradle 插件依赖 | 无（功能等价，且版本更高） | 不补 |
 | C-14 | 运行时树中的 headers/静态库（`include/`、`lib/*.a`） | 只为编译期服务，运行时不需要 | 无 | 打包时按需再补 |
+| C-15 | dsh 语音输入（`sherpa-onnx-linux-x64`，31.8 MB） | 只有 linux-x64 预编译，无 Android 目标 | 不能本地语音识别 | 后续接 Android `SpeechRecognizer`（新功能） |
+| C-16 | dsh 桌面相关原生包（`@img/sharp-*`、`node-pty` 二进制） | 无 Android 预编译 | 见 C-03 / C-04 | 同 C-03 / C-04 |
 
 ## 降级（非裁剪，但能力打折）
 
@@ -26,3 +28,4 @@
 | G-01 | 进程隔离 | Landlock + flock 强制隔离 | 若 `system.node`/`landlock-run` 不可用则退化为普通子进程 | M2 实测后 |
 | G-02 | Octop uvicorn | `uvloop` + `httptools` | 纯 Python event loop（h11） | M2 |
 | G-03 | Octop IM 通道 | 全量渠道 | 仅保留纯 Python 可用的渠道，其余标 EXPERIMENTAL | M3 |
+| G-04 | dsh 内部模块绑定 | `node-addon-require-builtin` 原生句柄 | `--expose-internals` + 普通 `require`（补丁 P-01） | 上游发布 android 预编译包后恢复 |

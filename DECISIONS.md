@@ -39,6 +39,15 @@
 | D-021 | M0 只建空壳（Kotlin + Compose），不做 UI | 任务要求；M4 之前不投入外观 |
 | D-022 | 网络一律 bind `127.0.0.1`，不提供局域网访问开关 | 硬性约束 |
 
+## 内核获取方式（M2）
+
+| 编号 | 决策 | 理由 | 证据 / 影响面 |
+|---|---|---|---|
+| D-040 | dsh 的产物用 **npm 已发布包** `@deepseek-ai/dsh@0.2.2-rc.1`，不在 PC 上跑 `pnpm build` | 上游 `apps/cli/package.json` 的 name/version 与固定 SHA 完全一致，npm 上同版本可查；`pnpm build` 需要 pnpm 11.28.5 + 全 workspace 依赖（含 Electron/Playwright），成本远高于取官方产物，且不改一行业务代码 | `npm view @deepseek-ai/dsh version` → `0.2.2-rc.1`；`docs/STATE.md` M2-dsh |
+| D-041 | 允许对 dsh 的**依赖**打补丁（不碰 dsh 自身代码）：`node-addon-require-builtin` 降级为 `--expose-internals` | 该原生包无 android 目标，但它是启动必经之路；补丁等价替换其唯一职责 | `patches/dsh/…patch`、`docs/UPSTREAM.md` P-01 |
+| D-042 | dsh 启动命令固定带 `--expose-internals`，且必须注入 `TMPDIR` 指向 `filesDir/tmp` 并提前创建目录 | 前者是 P-01 的前提；后者修复 Termux Node 的 `os.tmpdir()` 默认指向 `/data/data/com.termux/files/usr/tmp` 导致 `spill-local` 插件失败 | 设备日志：`mkdtemp '/data/data/com.termux/files/usr/tmp/dsh-spill-XXXXXX'` → 注入后 0 告警 |
+| D-043 | pydantic-core 用 Rust + NDK 现场交叉编译（`x86_64-linux-android`），不用 Termux 包 | Termux 仓库无 `python-pydantic`；PyPI 无 android 轮子；pydantic 2.x 是 Octop 硬依赖 | 产物 `lib_pydantic_core.so` 6,093,592 bytes，3m01s |
+
 ## 环境事实（非决策，但影响后续）
 
 | 编号 | 事实 | 证据 |
