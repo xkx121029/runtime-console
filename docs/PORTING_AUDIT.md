@@ -35,7 +35,7 @@
 
 | 名称 | 版本 | 分级 | 方案 | 证据 |
 |---|---|---|---|---|
-| Node 运行时 | `>=24.9` | **C（高风险）** | 先试 nodejs-mobile（Node 18.20.4）；不行则 NDK 交叉编译官方 Node 24，产物命名 `lib*.so` 放 `jniLibs` 后 `exec` | `package.json:8-10`；nodejs-mobile releases 最高 v18.20.4 |
+| Node 运行时 | `>=24.9` | **B（已实测）** | 用 Termux 预编译 Node 26.13.0（bionic）以 `lib*.so` 进 APK `lib/` 后 exec；nodejs-mobile（Node 18）因缺 `node:sqlite` 被裁 | `package.json:8-10`；`packages/storage/storage-sqlite/src/unit.ts:11`（`import type { DatabaseSync } from 'node:sqlite'`）；设备实测见 `docs/STATE.md` |
 | pnpm workspace 安装 | 11.28.5 | **B** | 在 PC 上 `pnpm install && pnpm build`，只把构建产物打入 APK；设备上不装依赖 | `package.json:7,20-41` |
 | TypeScript 运行时依赖 | 全 ESM | **A（理论上）** | Node 18 需确认是否用到 Node 20+ API（如 `node:sqlite`、import attributes） | `package.json:6` |
 | Electron 桌面壳 | `^44.7.0` | **D** | 裁剪：Android 用原生 Compose 壳替代 | `apps/desktop/package.json:71` |
@@ -76,7 +76,7 @@
 
 | 名称 | 版本 | 分级 | 方案 | 证据 |
 |---|---|---|---|---|
-| CPython | `>=3.12` | **C** | 优先 Chaquopy；需确认 Chaquopy 是否提供 3.12 | `pyproject.toml:11` |
+| CPython | `>=3.12` | **B（已实测）** | 采用 Termux 预编译 CPython 3.14.10（bionic），`PYTHONHOME` 注入 | `pyproject.toml:11`；设备实测见 `docs/STATE.md` |
 | fastapi | `>=0.110` | **A** | 纯 Python | `pyproject.toml:14` |
 | uvicorn[standard] | `>=0.27` | **A/C** | `[standard]` 含 `uvloop`/`httptools`（C 扩展）；降级为纯 Python 模式（`--http h11`） | `pyproject.toml:15` |
 | pydantic | `>=2.6,<2.14` | **C** | `pydantic-core` 为 Rust 扩展，需 Android 轮子 | `pyproject.toml:16` |
@@ -114,3 +114,20 @@
 
 详见 `docs/STATE.md` 的 M0 结论：**conditional-go**。
 理由：两侧都存在"运行时版本"这一硬门槛（Node 24 vs nodejs-mobile 18；Python 3.12 vs Chaquopy 未知），但它们都是可验证的工程问题，而不是架构性不可行；同时两侧都有明确的裁剪清单可以把不可用能力隔离。
+
+## 四、M0 实测补充（2026-11-08）
+
+运行时路线已用设备实测取代静态推断：
+
+| 运行时 | 结论 | 证据 |
+|---|---|---|
+| Node | Termux 预编译 `node 26.13.0` 在 API 36 x86_64 上运行成功；`node:sqlite` 路线得以保留 | `docs/STATE.md`「实测证据 · Node」 |
+| Python | Termux 预编译 CPython `3.14.10` 运行成功，满足 `>=3.12` | `docs/STATE.md`「实测证据 · Python」 |
+
+仍未验证、不得写成"通过"的项：
+
+1. 运行时从 APK `lib/` 目录启动（M1）。
+2. dsh / Octop 内核在设备上的启动与端口监听（M2）。
+3. `pydantic-core`、`cryptography`、`argon2-cffi` 等二进制轮子在 bionic 上的可安装性。
+4. arm64 真机。
+

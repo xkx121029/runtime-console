@@ -1,6 +1,6 @@
 # 项目状态（STATE）
 
-最后更新：2026-11-07 23:59（Asia/Shanghai）
+最后更新：2026-11-08 00:40（Asia/Shanghai）
 
 ## 当前上游 SHA
 
@@ -13,45 +13,106 @@
 
 | 里程碑 | 状态 | 说明 |
 |---|---|---|
-| M0 审计 | 进行中 | submodule 已固定；审计文档已产出；运行时 hello 与工程骨架待完成 |
-| M1 运行时 | 未开始 | Node/Python 运行时落地到 APK `lib/` |
-| M2 内核启动 | 未开始 | 两个内核真实启动 |
+| M0 审计 + 最小可运行验证 | **已完成** | 两个运行时在模拟器上跑通，证据见下 |
+| M1 运行时打包 | 未开始 | 把 Node/Python 放进 APK `lib/` 并由 `RuntimeHost` 启动 |
+| M2 内核启动 | 未开始 | dsh / Octop 真实启动 |
 | M3 桥接 | 未开始 | gateway + bridges |
 | M4 UI | 未开始 | 最朴素可用界面 |
 
+## M0 结论：**conditional-go**
+
+- 运行时层面：**go**。Node 26.13.0 与 CPython 3.14.10 均已在 x86_64 模拟器上完成"版本 + 读写文件 + 127.0.0.1 HTTP 自请求"验证。
+- 内核层面：**待 M1/M2 验证**。dsh 依赖 `node:sqlite`（Node 22+），nodejs-mobile（Node 18）路线被证伪；改用 Termux 预编译 Node 26 后可满足版本要求，但把二进制搬进 APK `lib/` 的启动尚未验证。
+
 ## 已完成
 
-1. `git init`（main 分支）、`.gitignore`。
-2. 两个上游以 submodule 固定 SHA（`git submodule status` 可复现）。
-3. 事实基线核对：dsh 的 Node `>=24.9`、pnpm 11.28.5、284 个包、Electron/Playwright/node-pty/sharp 依赖；Octop 的 Python `>=3.12`、FastAPI/uvicorn、默认 `127.0.0.1:8088`、`~/.octop`。
-4. 产出 `docs/PORTING_AUDIT.md`、`docs/CUTS.md`、`DECISIONS.md`。
+1. `git init`（main）、`.gitignore`；两个上游以 submodule 固定 SHA。
+2. 事实基线核对（见 `docs/PORTING_AUDIT.md`）。
+3. 最小 Android 工程骨架：`app` + `core` / `runtime-host` / `gateway` / `bridges` / `ui`，Kotlin + Compose，`assembleDebug` 通过，APK 11.4MB。
+4. 应用已安装并启动，界面在前台（`topResumedActivity=dev.runtimeconsole.app/.MainActivity`）。
+5. 两个运行时设备侧验证通过（见下）。
 
-## M0 结论
+## 实测证据
 
-**conditional-go**。理由见 `docs/PORTING_AUDIT.md` 第三节；两个硬门槛（Node 24 vs nodejs-mobile 18；Python 3.12 vs Chaquopy 能力）都必须在本轮真机/模拟器上取证，取证失败则按 CUTS/降级处理，不阻塞骨架推进。
+环境：`emulator-5560`，sdk_gphone64_x86_64，API 36（Android 16），x86_64；adb 直连。
 
-## 下一步（按顺序）
+### Node
 
-1. 最小 Android 工程骨架（Kotlin + Compose，模块 `core`/`runtime-host`/`gateway`/`bridges`/`ui`，包名 `dev.runtimeconsole.app`），`assembleDebug` 通过。
-2. Node hello：nodejs-mobile v18.20.4 预编译包中取 x86_64 `libnode.so`，在模拟器 `/data/local/tmp` 验证版本、文件读写、`127.0.0.1` HTTP 监听。
-3. Python hello：优先 Chaquopy（验证 3.12 可用性）；失败则用 Termux 预编译 Python 做设备侧 POC 并如实标注。
-4. M1：运行时放进 APK `lib/`（`lib*.so`），由 `RuntimeHost` 启动，不再依赖 `/data/local/tmp`。
+命令：
+```
+adb shell "cd /data/local/tmp/t && LD_LIBRARY_PATH=/data/local/tmp/t/usr/lib POC_DIR=/data/local/tmp/t ./usr/bin/node hello.js"
+```
+输出：
+```
+NODE_VERSION=v26.13.0
+NODE_ARCH=x64
+NODE_PLATFORM=android
+NODE_CWD=/data/local/tmp/t
+FILE_WRITE_READ=hello-from-node
+FILE_SIZE=16
+HTTP_LISTEN=127.0.0.1:43875
+HTTP_SELF_FETCH=200:ok-from-node
+```
+
+### Python
+
+命令：
+```
+adb shell "cd /data/local/tmp/t && LD_LIBRARY_PATH=/data/local/tmp/t/usr/lib PYTHONHOME=/data/local/tmp/t/usr PYTHONPATH=/data/local/tmp/t/usr/lib/python3.14 POC_DIR=/data/local/tmp/t ./usr/bin/python3.14 hello.py"
+```
+输出：
+```
+PYTHON_VERSION=3.14.10 (main, Nov  5 2026, 05:25:26) [Clang 21.0.0 ...
+PYTHON_IMPL=CPython
+PYTHON_MACHINE=x86_64
+PYTHON_CWD=/data/local/tmp/t
+FILE_WRITE_READ=hello-from-python
+FILE_SIZE=18
+HTTP_LISTEN=127.0.0.1:42201
+HTTP_SELF_FETCH=200:ok-from-python
+```
+
+### 体积与启动
+
+| 项 | 实测值 | 备注 |
+|---|---|---|
+| `usr/bin/node` | 50,715,096 B（48.4MB） | Termux 预编译，动态链接 bionic |
+| `usr/lib/libpython3.14.so` | 5,822,696 B（5.6MB） | CPython 主体 |
+| 运行时整棵树 `/data/local/tmp/t/usr` | 154MB | 含 headers/静态库，正式打包可裁到约 60–70MB |
+| 骨架 APK | 11.4MB | 空壳 |
+| 冷启动 `Displayed` | 19.9s / 24.6s | 模拟器首次冷启动極慢，为空壳 Compose，不代表真机；需在 M4 用真机复测 |
+| 常驻内存 PSS | 63,238 KB | 空壳界面 |
+
+## 下一步（M1 具体动作）
+
+1. 把裁剪后的运行时树放入 `runtime-host/src/main/jniLibs/<abi>/lib*.so`（Node 二进制改名 `libnode_exec.so`，依赖库全部 `lib*.so`），在 `applicationInfo.nativeLibraryDir` 定位并 `exec`。
+2. `RuntimeHost` 负责：注入 `HOME`/`TMPDIR`/`DSH_HOME`/`OCTOP_HOME`、`LD_LIBRARY_PATH`、日志重定向到 `filesDir/logs`。
+3. 先在模拟器验证"从 APK lib/ 启动 node -v 与 python -V"，再进入 M2 启动内核。
+4. 同步产出上游补丁：`HOME` 注入、`node:sqlite` 兼容确认、Octop 的 `~/.octop` 处理。
 
 ## 已知坑
 
-1. `github.com:443` 间歇不可达；`api.github.com`/`codeload.github.com`/`ghfast.top` 可达。克隆失败先走 `https://ghfast.top/https://github.com/...`。
-2. 任务书写的 `TencentCloud/Octopus` 不存在，实际是 `TencentCloud/Octop`（见 DECISIONS D-001）。
-3. nodejs-mobile 最新只到 Node 18.20.4，dsh 要求 Node ≥24.9 —— M1 必须正面验证 dsh 能否在 Node 18 启动。
-4. Android `homedir()` 不可写，必须注入 `HOME` / `DSH_HOME` / `OCTOP_HOME`。
-5. 模拟器是 x86_64（API 36），真机 arm64 需另验；报告必须标明验证环境。
+1. `github.com:443` 间歇不可达；`api.github.com`/`codeload.github.com`/`ghfast.top` 可达。克隆失败改走 `https://ghfast.top/https://github.com/...`。
+2. 任务书的 `TencentCloud/Octopus` 不存在，实际是 `TencentCloud/Octop`（DECISIONS D-001）。
+3. **nodejs-mobile 只到 Node 18.20.4，而 dsh 使用 `node:sqlite`（`upstream/deepseek-harness/packages/storage/storage-sqlite/src/unit.ts:11`），Node 18 无此模块 → nodejs-mobile 路线对 dsh 不成立。**
+4. 项目绝对路径含 `&`（`e:\happy_dsh&octopinphone`），cmd 批处理会把 `&` 当分隔符：
+   - `gradlew.bat` 直接在原路径不可用；已建目录联接 `C:\rc` → 项目根，用 `C:\rc\gradlew.bat` 构建。
+   - PowerShell 里直接调 `gradle.bat` 传含 `&` 的 `-p` 参数也会被截断；改用 `java -classpath gradle-launcher-*.jar org.gradle.launcher.GradleMain -p "原路径"`。
+5. Termux 包文件名含冒号（`openssl_1:3.6.5_x86_64.deb`），PowerShell 的 `Split-Path -Leaf` 会把冒号当路径分隔符，下载脚本需特殊处理。
+6. `adb push` 目录时遇到符号链接（`usr/lib/terminfo`、`usr/lib/icu/current`）会报 Permission denied；改为本地 `tar -czf` + 设备端 `toybox tar -xzf`。
+7. 模拟器无 `curl`/`wget`，设备侧只能靠自写脚本自请求验证 HTTP。
+8. 模拟器极慢（冷启动 20s+），不要用它判断性能。
+9. 下载走 `packages.termux.dev` 约 30KB/s，中科大镜像 `mirrors.ustc.edu.cn/termux` 约 500KB/s，后续一律用镜像。
 
 ## 技术债
 
 | 编号 | 内容 | 影响 |
 |---|---|---|
-| T-01 | 上游补丁尚未产生（M0 未改上游） | M1 起每处改动出 `.patch` 并写 `docs/UPSTREAM.md` |
-| T-02 | 运行时二进制在 `/data/local/tmp` 仅为 POC | 正式形态必须进 APK `lib/` |
-| T-03 | 未验证 Chaquopy 是否支持 Python 3.12 | 决定 Octop 可用面 |
+| T-01 | 上游补丁尚未产生 | M1 起每处改动出 `.patch` 并写 `docs/UPSTREAM.md` |
+| T-02 | 运行时目前在 `/data/local/tmp` | 正式形态必须进 APK `lib/` |
+| T-03 | 只能用 Termux 预编译包（非官方构建） | 需在 M1 评估官方 Node 交叉编译或固化 Termux 构建来源 |
+| T-04 | 真机 arm64 未验 | 报告已标注验证环境为 x86_64 模拟器 |
+| T-05 | `gradlew.bat` 在含 `&` 路径下不可用 | 用 `C:\rc` 联接绕过；文档需说明 |
 
 ## 验证环境
 
@@ -60,5 +121,6 @@
 | 设备 | `emulator-5560`（sdk_gphone64_x86_64，API 36，Android 16，x86_64） |
 | adb | `c:\Users\linch\AppData\Local\Android\Sdk\platform-tools\adb.exe` |
 | JDK | `C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot`（21.0.12.1） |
-| Gradle | 本机缓存 8.14.3 / 9.x |
+| Gradle | 8.14.2（缓存，`~/.gradle/wrapper/dists/gradle-8.14.2-bin`） |
+| AGP / Kotlin | 8.13.2 / 2.2.21 |
 | SDK | platforms 33–36，NDK 26.1/27.0/28.2，CMake 3.22.1 |

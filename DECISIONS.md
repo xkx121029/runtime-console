@@ -15,9 +15,9 @@
 
 | 编号 | 决策 | 理由 | 影响面 |
 |---|---|---|---|
-| D-010 | Node 运行时优先 `nodejs-mobile` 预编译包（v18.20.4），其后再评估官方 Node 交叉编译 | 需求指定优先级；nodejs-mobile 发布页存在 Android 预编译产物（54.6MB zip），可当日验证 | 若 dsh 实际依赖 Node ≥24 API，则此路线不成立，见 D-011 |
+| D-010 | ~~Node 运行时优先 `nodejs-mobile` 预编译包（v18.20.4）~~ **已修订**：nodejs-mobile 路线对 dsh 不成立，改用 Termux 官方仓库的预编译 Node 26.13.0（x86_64/arm64 均有包），以 `lib*.so` 形式进 APK `lib/` 后 exec | dsh 使用 `node:sqlite`（`upstream/deepseek-harness/packages/storage/storage-sqlite/src/unit.ts:11`），Node 18 无该模块；nodejs-mobile 最高只到 18.20.4；Termux 包为 bionic 原生构建，实测在 API 36 上可运行 | 见 `docs/STATE.md` 实测证据；M1 需固化构建来源 |
 | D-011 | 不修改 dsh 的 `engines.node` 声明，不降级 dsh 源码；若 Node 18 无法启动 dsh，则把"完整 dsh 内核"降级为 EXPERIMENTAL 并记录 | 禁止为跑通重写内核；`engines` 是上游契约 | M1/M2 范围与验收口径 |
-| D-012 | Python 运行时优先 Chaquopy；若 Chaquopy 无 Python 3.12 或关键二进制轮子缺失，则降级为"交叉编译 CPython + pip 离线轮子"或只跑纯 Python 子集 | 需求指定优先级；Octop 要求 `>=3.12` | 决定 Octop 可用面 |
+| D-012 | ~~Python 运行时优先 Chaquopy~~ **已修订**：采用 Termux 预编译 CPython 3.14.10（bionic），以 `libpython3.14.so` + 可执行 stub 形式进 APK `lib/`，`PYTHONHOME` 指向 `filesDir` | Chaquopy 最新只支持到 Python 3.13，而 Octop 要求 `>=3.12`（可用）但浏览器/桌面 extras 仍不可用；Termux CPython 3.14 实测可运行，且不受 Gradle 插件与 Chaquopy 私有仓库约束 | 见 `docs/STATE.md` 实测证据；pip 安装原生轮子仍需另验 |
 | D-013 | M0 阶段运行时验证允许把二进制放到 `/data/local/tmp`（非 app data）执行，仅用于证明"能跑"；正式形态必须是 APK `lib/` 目录内的 `lib*.so` 并由 `Runtime.exec` 启动 | 硬性约束"不得在 app data 目录 exec 二进制"；`/data/local/tmp` 是系统临时区，不属于 app data | 验证证据的可迁移性 |
 | D-014 | 两个内核共用一个 App、一个入口；`gateway` 只做本机回环反代与进程编排，不改写业务 | 硬性约束 | 模块划分 |
 

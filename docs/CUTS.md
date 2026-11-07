@@ -15,6 +15,9 @@
 | C-09 | Octop 远程桌面（mss/pynput extras） | Android 无 X11/桌面输入模型 | 不能作为被控桌面 | 不补 |
 | C-10 | Octop 本地 ONNX 向量检索（fastembed/onnxruntime） | 无 Android onnxruntime 轮子（`pyproject.toml:79-84`） | 本地 embedding/OCR 不可用 | 后续可改用云端 embedding，或寻找 Android 版 onnxruntime |
 | C-11 | 局域网访问 | 硬性约束：只 bind 127.0.0.1 | 同一 Wi-Fi 下其他设备无法直接访问 | 不补（安全边界） |
+| C-12 | nodejs-mobile 运行时路线 | 最高只到 Node 18.20.4，而 dsh 使用 `node:sqlite`（Node 22+）：`upstream/deepseek-harness/packages/storage/storage-sqlite/src/unit.ts:11` | 无（改用 Termux 预编译 Node 26.13.0，实测可用） | 不补；若上游未来发布 Node 22+ 预编译再评估 |
+| C-13 | Chaquopy 路线 | Chaquopy 最高 Python 3.13；Termux 已有 3.14.10 预编译且实测可跑，避免私有仓库与 Gradle 插件依赖 | 无（功能等价，且版本更高） | 不补 |
+| C-14 | 运行时树中的 headers/静态库（`include/`、`lib/*.a`） | 只为编译期服务，运行时不需要 | 无 | 打包时按需再补 |
 
 ## 降级（非裁剪，但能力打折）
 
