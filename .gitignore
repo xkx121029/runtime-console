@@ -14,6 +14,8 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+# Kotlin 编译器会话/错误日志目录
+.kotlin/
 *.apk
 *.aab
 *.keystore
