@@ -1,0 +1,2 @@
+# 补丁必须保持 LF：CRLF 上下文会导致 git apply 匹配失败
+*.patch text eol=lf

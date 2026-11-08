@@ -1,6 +1,6 @@
 # 项目状态（STATE）
 
-最后更新：2026-11-08 07:20（Asia/Shanghai）
+最后更新：2026-11-08 10:45（Asia/Shanghai）
 
 ## 当前上游 SHA
 
@@ -347,14 +347,16 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 | T-01 | 上游补丁尚未产生 | M2 起每处改动出 `.patch` 并写 `docs/UPSTREAM.md` |
 | T-02 | 运行时二进制不入库（60.9MB APK、99.5MB lib） | 换机/清缓存后需重跑 `scripts/build-runtime.ps1` |
 | T-03 | 只能依赖 Termux 预编译包（非上游官方 Android 构建） | 需固化下载源与校验和 |
-| T-04 | 真机 arm64 未验 | 目前证据仅 x86_64 模拟器 |
+| T-04 | 真机 arm64 未验 | 构建链路已打通（`scripts/build-runtime-arm64.ps1`），产物 14 个 `.so` / 99.8 MB / ELF AArch64；但未接入 APK（stdlib 的 `lib-dynload` 与架构相关，需按 ABI 拆包），无 arm64 真机 |
 | T-05 | `gradlew.bat` 在含 `&` 路径下不可用 | 用 `C:\rc` 联接绕过 |
 | T-06 | 兼容库靠 `sitecustomize.py` 预加载 | 若某扩展用 `ctypes.CDLL("libssl.so.3")` 名字也能命中；但进程内多份同名库会双份内存 |
 | T-07 | 首启解压 15.7MB stdlib 在主线程外的 IO 线程，但无进度条之外反馈 | 首次自检约 20~40s（模拟器） |
 | T-08 | Octop `GET /` 冷启动时 20s 不返回（热态 1.4s/200） | dashboard 首次访问需预热，已降级为“等一会儿” |
 | T-09 | Octop 依赖安装目前只有手工 adb 步骤 | 换机不可复现，待写 `scripts/octop-runtime.ps1` |
-| T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 已给出运行时分包方案并落地（`docs/DISTRIBUTION.md`）；导入吞吐仅约 0.4 MB/s，完整 dsh 树约 40 分钟 |
+| T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 运行时分包方案已落地并**端到端验证**：真实 dsh 包导入 20.3 分钟，导入后 dsh 正常监听 3080。详见 `docs/DISTRIBUTION.md` |
 | T-11 | Octop 首启向导提交后 WebView 空白 | **已复测通过**：向导 → 登录 → 主界面完整渲染（`docs/evidence/t11-main-ui-3.png`）；空白成因是内核随进程被回收 + 首帧慢 |
+| T-12 | 导入路径曾把目录树压平（zip 反斜杠分隔符） | 已修复（打包侧强制 `/`，解包侧归一化）；教训：导入成功不等于能用 |
+| T-13 | 无公共分发服务器，HTTP 导入 EXPERIMENTAL | 只能本机静态服务或"PC 打包 → 手机拷贝" |
 
 ## 验证环境
 
@@ -408,3 +410,96 @@ console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页�
 2. 长稳/内存：两个内核 + WebView 同时在线的峰值与 LMK 记录。
 3. arm64 产物链路。
 4. 合规发布面（LICENSE / THIRD_PARTY_NOTICES / 许可页 / 去品牌化 / README 三档标注）。
+
+以上 4 项已在第三轮完成，见下。
+
+## 2026-11-08 第三轮：T-10 端到端 / 长稳内存 / arm64 / 合规 / CI
+
+### 1. T-10：导入的树确实能跑起来（从"方案落地"到"端到端可用"）
+
+- 真实包：`dsh.zip` 234,550,743 B，69,498 个文件。
+- 第一次导入 48.0 分钟（2,879,193 ms），"成功"但树不可用：
+  PC 侧用 .NET Framework 的 `ZipFile.CreateFromDirectory` 打包，条目名是
+  `node_modules\.bin\acorn` 这种反斜杠形式；Android 侧按原样落盘，Linux 把 `\` 当普通字符，
+  **69k 个文件全部平铺在根目录**，dsh 报"未找到 dsh 安装"。
+- 修复两处：`scripts/pack-runtime.ps1` 手工建条目强制 `/`；`RuntimePack.kt` 解包时归一化
+  `\` → `/`。用**同一份旧包**重新导入：**20.3 分钟**（1,219,300 ms，校验 59.4 s），
+  `files/home/dsh/node_modules/` 结构正确。
+- 导入后启动：约 3 分钟监听 `127.0.0.1:3080`，`GET /` → 401（需要 token），
+  日志打印带 token 的地址，WebView 可正常进入控制台。
+- 结论：T-10 的"全新设备从装 APK 到能用"链路闭环，剩余 EXPERIMENTAL 只限
+  "无公共分发服务器""无增量/回滚"，已写进 `docs/DISTRIBUTION.md`。
+
+### 2. 长稳与内存：两内核 + WebView 同时在线 16 分钟
+
+采样方式：`dumpsys meminfo <pid>` 的 TOTAL PSS + `/proc/<pid>/status` VmRSS + `/proc/meminfo`，
+每 60 s 一次，共 16 个点（脚本 `.tmp/memwatch.ps1`，未入库）。
+
+| 进程 | PSS 区间 | 备注 |
+|---|---|---|
+| App 主进程 | 167–175 MB | 波动来自 Compose 刷新 |
+| node（Web 控制台） | 265,191 → 268,255 KB（峰值 270,114） | RSS 268,328 → 270,904 KB，16 分钟 +2.6 MB |
+| python（管理接口） | 250,070 → 250,080 KB | 基本不变 |
+| WebView sandboxed | 约 151 MB（手工采样一次） | `pidof` 全名匹配不到，未进 CSV |
+
+- 合计 PSS 峰值约 **840 MB**；`MemAvailable` 稳定在 **1.78–1.81 GB**（设备总内存 3.82 GB）。
+- LMK：`dumpsys activity lmk` 计数 **0**，logcat 无 `lowmemorykiller` 事件；
+  仅有的两条 `am_kill` 是 Google 自家应用因 CPU 超标被系统杀，与本 App 无关。
+- 决策：**不实现**"按需单内核启动 + 空闲回收"。理由：占用约为设备内存的 22%，
+  离 4 GB 预算很远；为省这点内存引入状态检查点/恢复会显著增加丢任务风险。
+  记录在此，等真机（4/6/8 GB 机型）实测再定。
+
+### 3. WebView 健壮性复测（真实失败路径）
+
+- 内核未启动时打开 WebView → 错误页："页面打不开 / 加载失败（-6）：
+  `net::ERR_CONNECTION_REFUSED`"+ 处理步骤 +「重试」「返回控制台启动」。
+  证据：`docs/evidence/webview-error-page.png`。
+- 内核起来后点「重试」→ 页面恢复加载，顶部进度条可见（约 75%）。
+  证据：`docs/evidence/webview-retry-progress.png`。
+- 新增取证入口 `--ez runtime_webview true`：不依赖内核状态直接打开 WebView，
+  用于复现错误页（此前只能等"进程刚好被回收"这种偶发条件）。
+
+### 4. arm64：链路打通到"能出产物"，真机仍未验证
+
+- `scripts/build-runtime-arm64.ps1`：取 Termux `aarch64` 的 nodejs 26.13.0 / python 3.14.10
+  依赖闭包 → 解包 → 复用 `build-runtime.ps1 -Abi arm64-v8a`。
+- 产物：14 个 `.so` / 99.8 MB，`llvm-readelf` 校验 `Machine=AArch64`、`VERIFY-ELF OK`。
+- **未接入 APK**：`assets/python-stdlib.zip` 内 `lib-dynload/*.so` 是架构相关的，
+  x86_64 与 arm64 不能共用，需要按 ABI 拆 flavor/splits（下一轮）。
+- 无 arm64 真机：T-04 仍为"未验证"，不伪造。
+
+### 5. 合规与发布面
+
+- `LICENSE`（MIT）、`THIRD_PARTY_NOTICES.md`（两个上游完整 MIT 文本 + Node/CPython 运行时 +
+  13 个原生库 + 155 个 Python 包 + 580 个 Node 包 + 品牌说明 + libimagequant GPL-3.0 风险标注）。
+- Gradle `copyLicenseAssets` 把两份文件复制进 `assets/licenses/`，App 内「开源许可」页
+  离线可读、全文可复制；实测：本应用 1,187 字符、第三方组件 36,604 字符。
+  证据：`docs/evidence/licenses-page.png`。
+- 去品牌化：**用户可见文案零命中**（内核卡片「Web 控制台」「管理接口」、许可页、应用名
+  `Runtime Console`）。仍保留上游名的只有三类，均非用户界面：
+  ①代码标识符与日志文件名（`KernelId.DSH_WEB`、`dsh-web.log`）；
+  ②运行时路径（`@deepseek-ai/dsh-*`、`octop` 包名，改了内核就起不来）；
+  ③`docs/` 与 `upstream/` 中的溯源记录。这三类属于功能性标识，已在 NOTICES 第 6 节说明。
+- README 三档标注：已验证 / EXPERIMENTAL / 计划中，逐条对应证据或限制。
+
+### 6. CI：本地门禁可用，远端未验证
+
+- `scripts/ci-local.ps1` = 构建 + 单元测试 + 补丁可应用性；`.github/workflows/ci.yml` 跑同一组命令。
+- 新增单元测试 `RuntimePackNamingTest`（zip 分隔符归一化，覆盖上面那个真实故障）。
+- 修了两个"门禁自己坏了"的问题：
+  ①`patches/dsh/node-addon-require-builtin+0.1.9.patch` 行数头与实际 hunk 不符，
+     且曾被 ASCII 编码写坏中文注释，`git apply` 报 corrupt patch → 用 npm 原始 tarball
+     与仓库内参考文件重新生成（UTF-8 / LF），实测前向、反向均可应用；
+  ②`git -C .tmp/dsh-npm apply --check` 会因 `.gitignore` 静默 "Skipped patch" 并返回 0，
+     检查形同虚设 → 改为复制目标文件到仓库外临时目录再检查。
+- 本地门禁结果：`BUILD SUCCESSFUL` + 单测通过 + `APPLY-OK`（已应用，反向可还原）。
+- **没有远端，CI 从未真正跑过**；以本地脚本结果作为提交门禁，这是事实，不写成"CI 已通过"。
+
+### 本轮遗留 / 下一轮接手点
+
+1. arm64 接入 APK：按 ABI 拆 `assets`（或把 `lib-dynload` 改放 jniLibs 并注入 `sys.path`）。
+2. 导入吞吐：`tar + rename` 方案（需内核侧配合改 `NODE_PATH`），目标 20 分钟 → 3 分钟内。
+3. 运行时包增量更新与回滚（保留上一版本目录 + 版本号切换）。
+4. 分发服务器：对象存储 + 分卷 + 校验清单；否则 HTTP 导入只能留在 EXPERIMENTAL。
+5. 真机验证（arm64、4 GB 内存机型），届时再评估是否需要空闲回收。
+
