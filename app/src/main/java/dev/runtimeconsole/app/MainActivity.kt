@@ -215,6 +215,11 @@ class MainActivity : ComponentActivity() {
             runInstall("运行时包下载") { packDownloader.download(url) { name, done, total -> reportPackProgress(name, done, total) } }
             return
         }
+        // 回滚到上一版本（升级出问题时不用重新导入 1.5 GB 的包）
+        if (intent.getBooleanExtra(EXTRA_PACK_ROLLBACK, false)) {
+            runRollback()
+            return
+        }
         // 取证入口：不依赖内核状态直接打开 WebView，用来验证"内核未起"的错误页
         if (intent.getBooleanExtra(EXTRA_RUNTIME_WEBVIEW, false)) {
             startActivity(
@@ -290,6 +295,26 @@ class MainActivity : ComponentActivity() {
         }.apply { name = "runtime-pack-install"; isDaemon = true }.start()
     }
 
+    private fun runRollback() {
+        if (packBusy.value) {
+            packMessage.value = "已有一次导入在进行"
+            return
+        }
+        packBusy.value = true
+        packMessage.value = null
+        packProgress.value = "回滚中…"
+        Thread {
+            val result = runCatching { packInstaller.rollback() }
+                .getOrElse { RuntimePackInstaller.Result(false, "回滚异常：${it.message}") }
+            runOnUiThread {
+                packBusy.value = false
+                packProgress.value = ""
+                packMessage.value = result.message
+                refreshPackStatus()
+            }
+        }.apply { name = "runtime-pack-rollback"; isDaemon = true }.start()
+    }
+
     private var lastProgressAt = 0L
 
     /** 大包解压时进度回调非常密集，节流到 250ms 一次，避免主线程被刷爆。 */
@@ -315,5 +340,6 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_RUNTIME_WEBVIEW = "runtime_webview"
         const val EXTRA_PACK_DIR = "runtime_pack_dir"
         const val EXTRA_PACK_URL = "runtime_pack_url"
+        const val EXTRA_PACK_ROLLBACK = "runtime_pack_rollback"
     }
 }

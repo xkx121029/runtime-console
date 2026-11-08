@@ -54,19 +54,23 @@ runtime-pack-x86_64/
       "target": "home/dsh",
       "bytes": 234550743,
       "sha256": "d573d277…",
-      "files": ["dsh.zip"]
+      "files": ["dsh.zip"],
+      "format": "zip"
     }
   ]
 }
 ```
+
+`format` 可选 `zip`（默认，兼容旧包）、`tar`、`tar.gz`。实测 tar 路径比 zip 快一个数量级
+（见第 4 节），新包建议用 `tar` 或 `tar.gz`；tar 包不再需要分卷，`files` 写一个文件名即可。
 
 规则：
 
 - `target` 是相对 App `filesDir` 的落位目录；安装器拒绝越界路径（`..` / 绝对路径）；
 - `sha256` 是**所有分卷按序拼接后**的哈希，分卷不削弱完整性；
 - `abi` 与设备 ABI 不符时直接拒绝（避免把 x86_64 包装到 arm64 机器上跑出一堆 `Exec format error`）；
-- 安装先解到 `<target>.staging`，校验通过才原子替换；旧目录改名备份，成功后再删。
-  校验失败时旧数据一个字节都不动。
+- 安装先解到 `<target>.staging`，校验通过才原子替换；旧目录改名成 `<target>.prev` **保留**，
+  用于回滚（见 3.5）。校验失败时旧数据一个字节都不动。
 
 PC 侧生成：
 
@@ -90,6 +94,18 @@ powershell -ExecutionPolicy Bypass -File scripts/pack-runtime.ps1 `
 2. 用 `scripts/octop-runtime.ps1` 准备好 Python 依赖（`.tmp/octop-site`）；
 3. `scripts/pack-runtime.ps1` 生成 `manifest.json` + 分卷 zip。
 
+也可以直接产出一个 tar 包（推荐，导入快一个数量级）：
+
+```powershell
+# 目录内容直接作为 target 根，不要再套一层目录
+tar -czf dsh.tar.gz -C .tmp\dsh-npm .
+tar -cf  dsh.tar    -C .tmp\dsh-npm .
+Get-FileHash dsh.tar.gz -Algorithm SHA256   # 填进 manifest 的 sha256
+```
+
+Windows 自带的 `tar.exe`（bsdtar）可用；Android 端解包用系统 `toybox tar`，
+不需要额外依赖，也不需要改内核的 `NODE_PATH` 或入口路径——解出来的目录结构和 zip 完全一致。
+
 ### 3.3 传到手机（三选一）
 
 | 方式 | 适用 | 实测 |
@@ -102,8 +118,23 @@ powershell -ExecutionPolicy Bypass -File scripts/pack-runtime.ps1 `
 
 1. 打开 App → 顶部「运行时组件」卡片会显示两个组件是否缺失；
 2. 点「导入运行时包」→ 系统目录选择器 → 选中 `runtime-pack` 目录；
-3. 观察进度：`校验 …%` → `解压 …（N 项）…%`；
+3. 观察进度：`校验 …%` → `解包 …%`；
 4. 成功后组件状态变为「已就绪」，内核卡片可正常启动。
+
+### 3.5 升级与回滚
+
+- 再次导入新包时，旧目录不会删除，而是改名成 `<target>.prev`；`files/runtime-pack.json`
+  记录 `packVersion` 与 `prevPackVersion`。
+- 回滚（无需重新导入 1.5 GB）：
+
+```bash
+adb shell am start -n dev.runtimeconsole.app/.MainActivity --ez runtime_pack_rollback true
+```
+
+  回滚把当前目录挪开、`.prev` 换回来，成功后删除被替换下来的目录；任意一步失败都会
+  逆序还原，不会留下"一半新一半旧"。
+- 保留了上一版就要求磁盘能同时容纳「当前 + 新版 staging + 上一版」；空间不足时安装器
+  会在预检阶段直接报"存储空间不足"，不会装到一半失败。
 
 ## 4. 实测数据（x86_64 模拟器，Android 16 / API 36）
 
@@ -112,8 +143,11 @@ powershell -ExecutionPolicy Bypass -File scripts/pack-runtime.ps1 `
 | PC 侧打包 dsh（7 万文件，Fastest 压缩） | 约 3 分钟 → 234,550,743 B |
 | `adb push` 234 MB | 53 s（4.1 MB/s） |
 | 设备端 SHA-256 校验 234 MB | **22.6 s**（首次）/ **59.4 s**（同机第二次，后台还有内核在跑） |
-| 设备端解包 7 万文件（正确目录树） | **20.3 分钟**（1,219,300 ms，69,498 个文件，约 0.6 MB/s 产出） |
+| 设备端解包 7 万文件（zip 路径，正确目录树） | **20.3 分钟**（1,219,300 ms，69,498 个文件，57 文件/s，约 0.4–0.5 MB/s） |
 | 设备端解包（踩到分隔符 bug 的那次） | 48.0 分钟（2,879,193 ms），且产出的树不可用，见 6.1 |
+| 设备端 `tar -xf`（133 MB 树 / 8,660 文件） | **20.2 s** → 6.6 MB/s 产出、429 文件/s |
+| 同上经 App 导入（tar.gz 14.1 MB，走 stdin 管道） | **28.0 s**（校验 2.8 s + 解包 25.1 s）→ 5.3 MB/s 产出、346 文件/s |
+| 全量 69,498 文件推算（以文件数线性外推） | tar ≈ **2.7 分钟**；tar.gz ≈ **3.4 分钟**（基线 20.3 分钟） |
 | 导入后启动 `dsh web` | 约 3 分钟到监听 3080（`GET /` 返回 401，日志打印带 token 的地址） |
 
 > 日志里每次导入都会打印每个 part 的 `校验 <ms>ms，总计 <ms>ms`
@@ -137,15 +171,19 @@ powershell -ExecutionPolicy Bypass -File scripts/pack-runtime.ps1 `
    - `RuntimePack.kt` 解包时把 `\` 归一化成 `/`（旧包也能装对）。
    复测：同一份旧包重新导入后 `files/home/dsh/node_modules` 结构正确，dsh 正常监听 3080。
    教训：**导入成功 ≠ 能用**，验收必须包含"导入后内核能起来"。
-2. **导入慢**：正确目录树下 20 分钟量级（0.6 MB/s 产出）。瓶颈在"海量小文件逐条创建"，
-   同一设备顺序写实测 100 MB/s。计划中的改进：
-   - 把解包放进前台服务并加唤醒锁，避免导入期间被降频；
-   - 依赖整理成更少的大文件（单个不压缩 tar + 首启 `rename`），需要内核侧配合改 `NODE_PATH`；
-   - 提供"跳过已存在文件"的增量导入。
+2. **导入慢（已用 tar 路径缓解，未完全消灭）**：zip 路径 20.3 分钟，瓶颈在 Java 侧
+   逐条目创建对象。改成把整包字节灌给系统 `toybox tar` 的 stdin 后，同一棵 133 MB 树
+   从 ~152 s（按 57 文件/s 推算）降到 28 s，全量推算 2.7–3.4 分钟。仍然受"海量小文件"
+   限制，未做：
+   - 把解包放进前台服务并加唤醒锁（当前导入时 App 必须在前台）；
+   - 真正的增量导入（现在每次都整包替换，只是保留了上一版本）。
 3. **没有公共分发服务器**：HTTP 导入是 EXPERIMENTAL。要么自带对象存储，要么继续用
    "PC 打包 → 手机拷贝"。
-4. **没有增量与回滚 UI**：导入是整包替换，不保留版本历史（旧目录在成功后被删除）。
-5. **arm64 包未产出**：见 `docs/STATE.md` T-04，当前只有 x86_64 运行时。
+4. **回滚只有 adb 入口**：`--ez runtime_pack_rollback true` 可用且已实测；App 内还没有
+   "回滚到上一版"按钮，也没有"跳过已存在文件"的增量安装。
+5. **arm64 包能构建但未在真机验证**：`scripts/build-runtime-arm64.ps1` 能产出
+   `lib/arm64-v8a` 一整套 .so（ELF AArch64）并打进 APK，但没有 arm64 真机、
+   模拟器也跑不了 arm64 镜像，见 `docs/STATE.md` T-04。
 
 ## 7. 相关代码
 

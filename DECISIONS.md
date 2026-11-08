@@ -54,6 +54,9 @@
 |---|---|---|---|
 | D-044 | ABI 切换用 Gradle 属性**整套替换** `src/main/assets` 与 `src/main/jniLibs`（`-PruntimeAssetsDir` / `-PruntimeJniLibsDir` / `-PruntimeAbi`），不做 flavor/splits | stdlib 里 `lib-dynload` 下是架构相关的动态库，x86_64 与 arm64 混装会得到"能装但内核起不来"的包；属性替换比 flavor 少一层变体矩阵，默认构建完全不变 | `runtime-host/build.gradle.kts`、`app/build.gradle.kts`；两向构建均 `BUILD SUCCESSFUL`，默认包仍为 `lib/x86_64` |
 | D-045 | `scripts/build-runtime-arm64.ps1` 末尾把与架构无关的 `launcher` / `selftest` 静态 assets 拷进 arm64 assets 目录 | Gradle 的 assets 替换是整目录覆盖，不补这步 arm64 包里没有内核启动脚本与自检脚本 | 修复前后解包对比：修复前 `assets/` 只有 `runtime-libs` 与 `python-stdlib.zip`；修复后 `assets/launcher/octop_serve.py`、`assets/selftest/hello.js|py` 齐全 |
+| D-046 | 运行时包新增 `"format": "tar"｜"tar.gz"`，安装器把整包字节灌进系统 `toybox tar` 的 stdin；zip 保留为默认兼容格式 | zip 路径在 Java 侧逐条目建对象，实测 57 文件/s；tar 路径同一设备 217–429 文件/s，提升 4–7.5 倍，且**不需要改内核的 `NODE_PATH` 或入口路径**——解出来的目录结构与 zip 完全一致 | `RuntimePack.kt` `extractTar()`；实测见 `docs/DISTRIBUTION.md` 第 4 节 |
+| D-047 | 升级时旧目录保留为 `<target>.prev`，marker 记录 `prevPackVersion`，提供 `--ez runtime_pack_rollback true` 回滚入口 | 用户升级失败时不必重新导入 1.5 GB；代价是同时存在「当前 + 新版 staging + 上一版」，安装前预检会拦住空间不足 | `RuntimePack.rollback()`；实测回滚成功 |
+| D-048 | release 签名优先读根目录 `keystore.properties`（gitignore），缺失时回退 debug 签名 | 保证任何机器 `assembleRelease` 都能产出可安装 APK，同时不把密钥写进仓库；回退产物只能自测 | `app/build.gradle.kts` signingConfigs |
 
 ## 环境事实（非决策，但影响后续）
 

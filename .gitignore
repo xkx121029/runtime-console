@@ -49,3 +49,5 @@ runtime-host/src/main/assets/runtime-libs/
 .env.*
 !.env.example
 secrets.properties
+# release 签名材料（storeFile 指向本地 keystore，绝不入库）
+keystore.properties

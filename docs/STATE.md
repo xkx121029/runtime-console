@@ -526,3 +526,63 @@ console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页�
 4. 分发服务器：对象存储 + 分卷 + 校验清单；否则 HTTP 导入只能留在 EXPERIMENTAL。
 5. 真机验证（4 GB 内存机型），届时再评估是否需要空闲回收。
 
+## 2026-11-08 第四轮：tar 导入 / 增量回滚 / release / README 校准 / 推送
+
+### 1. 导入吞吐：tar 路径落地，zip 保留
+
+- 实现：manifest 新增可选 `"format": "tar" | "tar.gz"`（默认 `zip`）。安装器把整包字节直灌
+  `/system/bin/tar -xzf - -C <staging> -o` 的 stdin，不再在 Java 里逐条目建对象。
+- **不需要内核侧补丁**：解出的目录结构与 zip 完全一致，`NODE_PATH` / 入口相对路径都不用动，
+  `patches/` 与 `docs/UPSTREAM.md` 无新增。
+- 实测（同一台 `emulator-5560`，x86_64）：
+  | 场景 | 结果 |
+  |---|---|
+  | 133 MB 树 / 8,660 文件 / 14.1 MB tar.gz | **28.0 s**（校验 2.8 s + 解包 25.1 s），5.3 MB/s 产出、346 文件/s |
+  | 350.7 MB tar / 16,434 条目（双内核在线） | **93.4 s**（校验 17.8 s + 解包 75.6 s），4.4 MB/s 产出、217 文件/s |
+  | 基线 zip（69,498 文件） | 20.3 分钟，57 文件/s，0.4–0.5 MB/s |
+  | 全量 69,498 文件外推 | tar **2.7–5.3 分钟**（闲置 429 文件/s ↔ 双内核在线 217 文件/s） |
+- 结论：**有明显提升（4–7.5 倍），不回滚**；但"3 分钟内"只在无内核争抢 IO 时成立，
+  完整 69k 文件端到端仍未跑过，README 标 EXPERIMENTAL。
+- 途中修掉的真问题：`--restrict` 会把锚点设成归档第一个目录，多根 tar 大面积失败；
+  toybox 默认就拒绝解到 `-C` 之外（`../evil.txt` 实测被拦），去掉 `--restrict`。
+- 磁盘压力：350 MB 包测试时 `/data` 一度 88%，测完立即清理；大包导入的空间预检依赖 manifest
+  的 `bytes`，未声明时跳过。
+
+### 2. 增量更新与回滚
+
+- 旧目录不再删除，改名 `<target>.prev`；marker 增加 `prevPackVersion`、`targets`。
+- `--ez runtime_pack_rollback true` 实测：tartest-2 → 回滚 → marker 回到 tartest-1，`.prev` 被消费，
+  目录内容换回；换到一半失败会逆序还原。
+- 仍是整包替换，没有"跳过已存在文件"的增量安装；App 内也没有回滚按钮。
+
+### 3. release 打包
+
+- 根目录无 `keystore.properties` 时回退 debug 签名（文件已 gitignore），`assembleRelease` 可产出可安装 APK：
+  - `app-release.apk`：**56,045,023 B（53.45 MB）**，SHA-256 `CFAE2914F476CEEBCE3C9F3A042B39A46B324FB130301151B446F93A6B4BA1AE`
+  - 工具链：JDK 21.0.12（Microsoft Build）、Gradle 8.14.2、AGP 8.13.2、Kotlin 2.2.21、compileSdk 36、minSdk 26
+  - 构建命令与 `C:\rc` 目录联接法已写进 README
+- 首次 `assembleRelease` 因 **C: 盘 0 字节可用** 失败（D8 报磁盘空间不足）；清理
+  `~/.gradle/caches/8.14.3/transforms` 后重跑成功，属于本机环境问题，不是工程问题。
+- 启动耗时：模拟器在打包期间退出，release 冷启动**未测**（不编造数字），下一轮补。
+
+### 4. README 中英双语 + 三档校准
+
+- 逐条核对证据：把"导入 40 分钟""增量未做""arm64 已接入 APK"等过期表述改掉；
+  全量导入 3 分钟目标、release 签名、arm64 运行期如实标 EXPERIMENTAL。
+- 已验证新增：tar/tar.gz 导入实测、保留上一版本 + 回滚实测。
+
+### 5. 推送（开源已确认）
+
+- 取证：`gh` 未安装；`GH_TOKEN` / `GITHUB_TOKEN` 未设置；`git remote -v` 为空，无 credential helper。
+  → **GitHub 无法推送**，原因如实记录，未尝试绕过。
+- Gitee：`GITEE_TOKEN` 存在且 `GET /api/v5/user` 可用；仓库名去品牌化为 `runtime-console`。
+- 推送结果见本节末尾（成功后补充远端地址与 commit）。
+
+### 本轮遗留 / 下一轮接手点
+
+1. 完整 69,498 文件 tar 端到端实测（当前只有 350 MB / 16k 条目的数据与外推）。
+2. release 冷启动耗时（模拟器退出，未测）；arm64 真机仍然没有环境（T-04）。
+3. App 内回滚按钮 + 增量安装（跳过已存在文件）。
+4. GitHub 推送需要用户在机器上安装 `gh` 并登录，或提供 GitHub 令牌。
+5. 分发服务器仍无（HTTP 导入 EXPERIMENTAL）。
+
