@@ -27,6 +27,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# ZipArchiveMode / ZipArchive 在 System.IO.Compression 里，CreateEntryFromFile 在 FileSystem 里，
+# 两个都要显式加载（只加载 FileSystem 会在 [IO.Compression.ZipArchiveMode] 上 TypeError）。
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 if (-not $DshDir)  { $DshDir  = Join-Path $RepoRoot ".tmp\dsh-npm" }
@@ -41,11 +44,19 @@ $parts = New-Object System.Collections.ArrayList
 function New-Zip([string]$sourceDir, [string]$zipPath) {
     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
     Write-Host "压缩 $sourceDir → $zipPath" -ForegroundColor Cyan
-    [IO.Compression.ZipFile]::CreateFromDirectory(
-        $sourceDir, $zipPath,
-        [IO.Compression.CompressionLevel]::Fastest,
-        $false,
-        [Text.Encoding]::UTF8)
+    # 不能 use CreateFromDirectory：PowerShell 5.1 跑在 .NET Framework 上，它用反斜杠做条目
+    # 分隔符，Android 侧解出来会是一堆名字里带 "\" 的扁平文件（实测 dsh 树无法启动）。
+    # 这里手工建条目并强制用 "/"，与 zip 规范一致。
+    $root = (Resolve-Path $sourceDir).Path
+    $archive = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem $root -Recurse -File -Force) {
+            $rel = $file.FullName.Substring($root.Length).TrimStart('\').Replace('\', '/')
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $archive, $file.FullName, $rel, [IO.Compression.CompressionLevel]::Fastest)
+        }
+    }
+    finally { $archive.Dispose() }
 }
 
 function Add-Part([string]$id, [string]$title, [string]$target, [string]$zipPath) {
