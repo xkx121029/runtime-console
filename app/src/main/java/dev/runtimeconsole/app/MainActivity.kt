@@ -215,6 +215,15 @@ class MainActivity : ComponentActivity() {
             runInstall("运行时包下载") { packDownloader.download(url) { name, done, total -> reportPackProgress(name, done, total) } }
             return
         }
+        // 取证入口：不依赖内核状态直接打开 WebView，用来验证"内核未起"的错误页
+        if (intent.getBooleanExtra(EXTRA_RUNTIME_WEBVIEW, false)) {
+            startActivity(
+                Intent(this, KernelWebViewActivity::class.java)
+                    .putExtra(KernelWebViewActivity.EXTRA_URL, KernelId.DSH_WEB.baseUrl)
+                    .putExtra(KernelWebViewActivity.EXTRA_TITLE, KernelId.DSH_WEB.title),
+            )
+            return
+        }
         val wantDsh = intent.getBooleanExtra(EXTRA_RUNTIME_DSH, false)
         val wantOctop = intent.getBooleanExtra(EXTRA_RUNTIME_OCTOP, false)
         if (!wantDsh && !wantOctop) return
@@ -303,6 +312,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_RUNTIME_SELFTEST = "runtime_selftest"
         const val EXTRA_RUNTIME_DSH = "runtime_dsh"
         const val EXTRA_RUNTIME_OCTOP = "runtime_octop"
+        const val EXTRA_RUNTIME_WEBVIEW = "runtime_webview"
         const val EXTRA_PACK_DIR = "runtime_pack_dir"
         const val EXTRA_PACK_URL = "runtime_pack_url"
     }

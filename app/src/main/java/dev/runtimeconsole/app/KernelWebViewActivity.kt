@@ -232,13 +232,14 @@ class KernelWebViewActivity : ComponentActivity() {
                 )
                 Text(
                     text = "最常见的原因是内核还没启动完成（首次冷启动需要 1–2 分钟），" +
-                        "或者进程刚被系统回收。回控制台确认状态是「在线」后再打开。",
+                        "或者进程刚被系统回收。\n\n" +
+                        "处理：点下方「返回控制台」→ 在对应内核卡片上点「启动」→ 等状态变成「在线」→ 再点「打开」。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onRetry) { Text("重试") }
-                    TextButton(onClick = onBack) { Text("返回控制台") }
+                    TextButton(onClick = onBack) { Text("返回控制台启动") }
                 }
             }
         }
