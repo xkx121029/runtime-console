@@ -5,24 +5,33 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.documentfile.provider.DocumentFile
 import dev.runtimeconsole.bridges.AndroidSystemBridges
 import dev.runtimeconsole.core.KernelEndpointStatus
 import dev.runtimeconsole.core.KernelId
 import dev.runtimeconsole.core.KernelState
+import dev.runtimeconsole.core.RuntimeComponentStatus
 import dev.runtimeconsole.gateway.LoopbackGateway
+import dev.runtimeconsole.runtimehost.DirectoryPackSource
 import dev.runtimeconsole.runtimehost.KernelSupervisor
+import dev.runtimeconsole.runtimehost.PackSource
 import dev.runtimeconsole.runtimehost.RuntimeHost
+import dev.runtimeconsole.runtimehost.RuntimePackDownloader
+import dev.runtimeconsole.runtimehost.RuntimePackInstaller
 import dev.runtimeconsole.ui.RuntimeConsoleApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.Locale
 
 /** 应用唯一入口：把运行时宿主、内核管理与系统桥接注入 UI。 */
 class MainActivity : ComponentActivity() {
@@ -31,6 +40,25 @@ class MainActivity : ComponentActivity() {
     private lateinit var supervisor: KernelSupervisor
     private lateinit var gateway: LoopbackGateway
     private lateinit var bridges: AndroidSystemBridges
+    private lateinit var packInstaller: RuntimePackInstaller
+    private lateinit var packDownloader: RuntimePackDownloader
+
+    // 首装组件状态：放在 Activity 上而不是 Compose 里，SAF 回调（Compose 外）也要能刷新
+    private val packComponents = mutableStateOf<List<RuntimeComponentStatus>>(emptyList())
+    private val packBusy = mutableStateOf(false)
+    private val packProgress = mutableStateOf("")
+    private val packMessage = mutableStateOf<String?>(null)
+
+    /** 用户从系统文件选择器挑运行时包目录（SAF），授权只持续到本次导入。 */
+    private val pickPackDirectory = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val root = DocumentFile.fromTreeUri(this, uri)
+        if (root == null) {
+            packMessage.value = "无法读取所选目录"
+            return@registerForActivityResult
+        }
+        runInstall("所选目录") { SafPackSource(contentResolver, root) }
+    }
 
     /** 已请求启动、还没看到端口的标记：UI 用它显示"启动中"。 */
     private val requested = java.util.concurrent.ConcurrentHashMap.newKeySet<KernelId>()
@@ -44,6 +72,9 @@ class MainActivity : ComponentActivity() {
         supervisor = KernelSupervisor(host)
         gateway = LoopbackGateway(supervisor)
         bridges = AndroidSystemBridges(this)
+        packInstaller = RuntimePackInstaller(applicationContext)
+        packDownloader = RuntimePackDownloader(cacheDir)
+        refreshPackStatus()
 
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         setContent {
@@ -148,6 +179,12 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                components = packComponents.value,
+                packBusy = packBusy.value,
+                packProgress = packProgress.value,
+                packMessage = packMessage.value,
+                onImportPack = { pickPackDirectory.launch(null) },
+                onDismissPackMessage = { packMessage.value = null },
             )
         }
 
@@ -166,6 +203,15 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
+        // 首装取证入口：直接把某个目录 / 某个 URL 的运行时包交给安装器
+        intent.getStringExtra(EXTRA_PACK_DIR)?.let { path ->
+            runInstall("运行时包目录") { DirectoryPackSource(File(path)) }
+            return
+        }
+        intent.getStringExtra(EXTRA_PACK_URL)?.let { url ->
+            runInstall("运行时包下载") { packDownloader.download(url) { name, done, total -> reportPackProgress(name, done, total) } }
+            return
+        }
         val wantDsh = intent.getBooleanExtra(EXTRA_RUNTIME_DSH, false)
         val wantOctop = intent.getBooleanExtra(EXTRA_RUNTIME_OCTOP, false)
         if (!wantDsh && !wantOctop) return
@@ -182,11 +228,79 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    /** 首装组件状态：只读目录，开销可以忽略（每 2s 随内核状态一起刷新）。 */
+    private fun refreshPackStatus() {
+        val status = runCatching { packInstaller.status() }.getOrNull() ?: return
+        packComponents.value = listOf(
+            RuntimeComponentStatus(
+                id = "home/dsh",
+                title = "Node 运行时（Web 控制台）",
+                detail = "解包后约 700 MB · 运行时包提供",
+                installed = status.components["home/dsh"] == true,
+                expectedBytes = 701L * 1024 * 1024,
+            ),
+            RuntimeComponentStatus(
+                id = "python-site",
+                title = "Python 运行时（管理接口）",
+                detail = "解包后约 800 MB · 运行时包提供",
+                installed = status.components["python-site"] == true,
+                expectedBytes = 803L * 1024 * 1024,
+            ),
+        )
+    }
+
+    /**
+     * 统一的首装入口：校验 + 解包都在后台线程，进度节流后回主线程刷新。
+     *
+     * @param sourceProvider 在后台线程执行，允许先下载再返回来源
+     */
+    private fun runInstall(label: String, sourceProvider: () -> PackSource) {
+        if (packBusy.value) {
+            packMessage.value = "已有一次导入在进行"
+            return
+        }
+        packBusy.value = true
+        packMessage.value = null
+        packProgress.value = "读取$label…"
+        Thread {
+            val result = runCatching {
+                val source = sourceProvider()
+                packInstaller.install(source) { stage, done, total ->
+                    reportPackProgress(stage, done, total)
+                }
+            }.getOrElse { RuntimePackInstaller.Result(false, "安装异常：${it.message}") }
+            runOnUiThread {
+                packBusy.value = false
+                packProgress.value = ""
+                packMessage.value = result.message
+                refreshPackStatus()
+            }
+        }.apply { name = "runtime-pack-install"; isDaemon = true }.start()
+    }
+
+    private var lastProgressAt = 0L
+
+    /** 大包解压时进度回调非常密集，节流到 250ms 一次，避免主线程被刷爆。 */
+    private fun reportPackProgress(stage: String, done: Long, total: Long) {
+        val now = System.currentTimeMillis()
+        if (now - lastProgressAt < 250) return
+        lastProgressAt = now
+        val text = if (total > 0) {
+            String.format(Locale.US, "%s · %d%%（%s / %s）", stage, done * 100 / total,
+                RuntimePackInstaller.formatBytes(done), RuntimePackInstaller.formatBytes(total))
+        } else {
+            stage
+        }
+        runOnUiThread { packProgress.value = text }
+    }
+
     companion object {
         private const val PREFS = "runtime-console"
         private const val KEY_AUTO_RUN = "auto-run-kernels"
         const val EXTRA_RUNTIME_SELFTEST = "runtime_selftest"
         const val EXTRA_RUNTIME_DSH = "runtime_dsh"
         const val EXTRA_RUNTIME_OCTOP = "runtime_octop"
+        const val EXTRA_PACK_DIR = "runtime_pack_dir"
+        const val EXTRA_PACK_URL = "runtime_pack_url"
     }
 }

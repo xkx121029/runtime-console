@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import dev.runtimeconsole.core.KernelEndpointStatus
 import dev.runtimeconsole.core.KernelId
 import dev.runtimeconsole.core.KernelState
+import dev.runtimeconsole.core.RuntimeComponentStatus
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -139,6 +140,9 @@ fun RuntimeConsoleTheme(darkTheme: Boolean = androidx.compose.foundation.isSyste
  * @param onOpenKernel 用系统浏览器打开内核入口（dsh 自动带 token）
  * @param loadLog 读取日志尾部（挂起函数，IO 线程由 app 层保证）
  * @param selfTestOutput / selfTestRunning / onRunSelfTest 运行时自检
+ * @param components 首装组件状态（运行时分包）
+ * @param packBusy / packProgress / packMessage 分包导入的进度与提示
+ * @param onImportPack 选择运行时包所在目录并导入
  */
 @Composable
 fun RuntimeConsoleApp(
@@ -153,6 +157,12 @@ fun RuntimeConsoleApp(
     selfTestOutput: String = "",
     selfTestRunning: Boolean = false,
     onRunSelfTest: () -> Unit = {},
+    components: List<RuntimeComponentStatus> = emptyList(),
+    packBusy: Boolean = false,
+    packProgress: String = "",
+    packMessage: String? = null,
+    onImportPack: () -> Unit = {},
+    onDismissPackMessage: () -> Unit = {},
 ) {
     var logTarget by remember { mutableStateOf<KernelId?>(null) }
     var logText by remember { mutableStateOf("") }
@@ -167,6 +177,18 @@ fun RuntimeConsoleApp(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 item { Header(kernels = kernels, runtimeReady = runtimeReady) }
+                if (components.isNotEmpty()) {
+                    item {
+                        ComponentsCard(
+                            components = components,
+                            busy = packBusy,
+                            progress = packProgress,
+                            message = packMessage,
+                            onImport = onImportPack,
+                            onDismissMessage = onDismissPackMessage,
+                        )
+                    }
+                }
                 items(kernels, key = { it.id.name }) { status ->
                     KernelCard(
                         status = status,
@@ -378,6 +400,95 @@ private fun Metric(label: String, value: String) {
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
         )
+    }
+}
+
+@Composable
+private fun ComponentsCard(
+    components: List<RuntimeComponentStatus>,
+    busy: Boolean,
+    progress: String,
+    message: String?,
+    onImport: () -> Unit,
+    onDismissMessage: () -> Unit,
+) {
+    val missing = components.count { !it.installed }
+    Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceVariant) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "运行时组件",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (missing == 0) "已就绪" else "缺 $missing 项",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (missing == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
+            }
+            Text(
+                text = "Node 与 Python 运行时不随安装包分发（总体积约 1.5 GB）。全新设备需先导入运行时包，否则内核无法启动。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            components.forEach { component ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(
+                                if (component.installed) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error,
+                                CircleShape,
+                            ),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(component.title, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            component.detail,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        text = if (component.installed) "已就绪" else "缺失",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (component.installed) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+            if (busy) {
+                Text(
+                    text = progress.ifBlank { "准备中…" },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onImport, enabled = !busy) {
+                    Text(if (busy) "导入中…" else "导入运行时包")
+                }
+                if (message != null) {
+                    TextButton(onClick = onDismissMessage) { Text("知道了") }
+                }
+            }
+            if (message != null) {
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = "把 manifest.json 与分卷 zip 放进手机存储的任意目录，再点上方按钮选择该目录。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
