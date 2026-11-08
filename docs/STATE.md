@@ -1,6 +1,6 @@
 # 项目状态（STATE）
 
-最后更新：2026-11-08 10:45（Asia/Shanghai）
+最后更新：2026-11-08 13:30（Asia/Shanghai）
 
 ## 当前上游 SHA
 
@@ -357,7 +357,7 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 | T-07 | 首启解压 15.7MB stdlib 在主线程外的 IO 线程，但无进度条之外反馈 | 首次自检约 20~40s（模拟器） |
 | T-08 | Octop `GET /` 冷启动时 20s 不返回（热态 1.4s/200） | dashboard 首次访问需预热，已降级为“等一会儿” |
 | T-09 | Octop 依赖安装目前只有手工 adb 步骤 | 换机不可复现，待写 `scripts/octop-runtime.ps1` |
-| T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 运行时分包方案已落地并**端到端验证**：真实 dsh 包导入 20.3 分钟，导入后 dsh 正常监听 3080。详见 `docs/DISTRIBUTION.md` |
+| T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 运行时分包方案已落地并**端到端验证**：zip 路径 20.3 分钟；新增 tar 路径实测 350.7 MB / 16,434 条目 93.4 s（217 文件/s），导入后 dsh 正常监听 3080。详见 `docs/DISTRIBUTION.md` 第四轮 |
 | T-11 | Octop 首启向导提交后 WebView 空白 | **已复测通过**：向导 → 登录 → 主界面完整渲染（`docs/evidence/t11-main-ui-3.png`）；空白成因是内核随进程被回收 + 首帧慢 |
 | T-12 | 导入路径曾把目录树压平（zip 反斜杠分隔符） | 已修复（打包侧强制 `/`，解包侧归一化）；教训：导入成功不等于能用 |
 | T-13 | 无公共分发服务器，HTTP 导入 EXPERIMENTAL | 只能本机静态服务或"PC 打包 → 手机拷贝" |
@@ -563,7 +563,9 @@ console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页�
   - 构建命令与 `C:\rc` 目录联接法已写进 README
 - 首次 `assembleRelease` 因 **C: 盘 0 字节可用** 失败（D8 报磁盘空间不足）；清理
   `~/.gradle/caches/8.14.3/transforms` 后重跑成功，属于本机环境问题，不是工程问题。
-- 启动耗时：模拟器在打包期间退出，release 冷启动**未测**（不编造数字），下一轮补。
+- 启动耗时：release 包**已安装并实测冷启动**：`ActivityTaskManager: Displayed … +14s498ms`
+  （x86_64 API 36，`am force-stop` 后启动、内核尚未拉起）。`am start -W` 在 12.2 s 处
+  返回 `Status: timeout`，因此以 logcat 的 Displayed 为准。
 
 ### 4. README 中英双语 + 三档校准
 
@@ -575,13 +577,17 @@ console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页�
 
 - 取证：`gh` 未安装；`GH_TOKEN` / `GITHUB_TOKEN` 未设置；`git remote -v` 为空，无 credential helper。
   → **GitHub 无法推送**，原因如实记录，未尝试绕过。
-- Gitee：`GITEE_TOKEN` 存在且 `GET /api/v5/user` 可用；仓库名去品牌化为 `runtime-console`。
-- 推送结果见本节末尾（成功后补充远端地址与 commit）。
+- Gitee：`GITEE_TOKEN` 存在且 `GET /api/v5/user` 可用（账号 `xkx1029`）；目标仓库名
+  `runtime-console`，但 `POST /api/v5/user/repos` 返回 **403 已禁止**，令牌没有建仓权限。
+  仓库不存在 → 无法 push；按"没有可用凭据就停下如实记录、不绕过"处理。
+- **结论：本轮没有推送任何远端。** 本地提交范围：`df30078` 及其后一条 README 修正提交。
+  用户在 Gitee 网页建好空仓库（或换一个带 `projects` 权限的令牌、或安装并登录 `gh`）后，
+  下一轮可直接 `git remote add gitee <url> && git push -u gitee main`。
 
 ### 本轮遗留 / 下一轮接手点
 
 1. 完整 69,498 文件 tar 端到端实测（当前只有 350 MB / 16k 条目的数据与外推）。
-2. release 冷启动耗时（模拟器退出，未测）；arm64 真机仍然没有环境（T-04）。
+2. arm64 真机仍然没有环境（T-04）；release 冷启动已测 14.5 s，但没有真机数据。
 3. App 内回滚按钮 + 增量安装（跳过已存在文件）。
 4. GitHub 推送需要用户在机器上安装 `gh` 并登录，或提供 GitHub 令牌。
 5. 分发服务器仍无（HTTP 导入 EXPERIMENTAL）。

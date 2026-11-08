@@ -6,7 +6,7 @@
 - 所有监听地址仅 `127.0.0.1`，不提供局域网访问。
 - 内核二进制以 `lib*.so` 形式随 APK 分发，`exec` 自应用自己的 `nativeLibraryDir`。
 - 大型运行时数据（Node 依赖树、Python site-packages）**不随 APK 分发**，通过「运行时包」在首装时导入。
-- 仓库地址：Gitee <https://gitee.com/linchzq/runtime-console>（GitHub 尚未推送，原因见 `docs/STATE.md`）。
+- 远端推送尚未完成：本机没有 GitHub 凭据，Gitee 令牌可鉴权但创建仓库返回 403，详见 `docs/STATE.md`。
 
 构建方式、模块划分与设备取证过程见 [docs/STATE.md](docs/STATE.md)；
 上游改动与补丁见 [docs/UPSTREAM.md](docs/UPSTREAM.md) 与 `patches/`。
@@ -40,7 +40,7 @@
 | 运行时包导入（SAF 选目录） | 格式、校验、回滚已完成；导入期间 App 需保持前台 |
 | 运行时分包 HTTP 下载与 Range 断点续传 | 无公共分发服务器；服务端忽略 `Range` 时退化为整包重下 |
 | 管理接口 dashboard 冷启动 | 首次 `GET /` 可能 20 s 不返回（热态 1.4 s / 200） |
-| 模拟器上的启动时延 | 冷启动 95–110 s，Compose 首帧 30–45 s；不作为性能结论 |
+| 模拟器上的启动时延 | release 冷启动 `Displayed +14.5 s`（x86_64 API 36，内核未启动时）；早期 debug 包测到 95–110 s，不作为性能结论 |
 | release 签名 | 没有 `keystore.properties` 时回退 debug 签名，产物可安装但只适合自测 |
 
 ### 计划中
