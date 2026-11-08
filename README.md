@@ -6,7 +6,7 @@
 - 所有监听地址仅 `127.0.0.1`，不提供局域网访问。
 - 内核二进制以 `lib*.so` 形式随 APK 分发，`exec` 自应用自己的 `nativeLibraryDir`。
 - 大型运行时数据（Node 依赖树、Python site-packages）**不随 APK 分发**，通过「运行时包」在首装时导入。
-- 远端推送尚未完成：本机没有 GitHub 凭据，Gitee 令牌可鉴权但创建仓库返回 403，详见 `docs/STATE.md`。
+- 仓库地址：GitHub <https://github.com/xkx121029/runtime-console>（Gitee 镜像待建，令牌无建仓权限）。
 
 构建方式、模块划分与设备取证过程见 [docs/STATE.md](docs/STATE.md)；
 上游改动与补丁见 [docs/UPSTREAM.md](docs/UPSTREAM.md) 与 `patches/`。
@@ -51,7 +51,7 @@
 | App 内回滚按钮 | 目前只有 adb 入口 |
 | 增量安装（跳过已存在文件） | 现在每次都整包替换，只是保留上一版本 |
 | 按需单内核启动 + 空闲回收 | 两个内核同时在线的内存峰值尚未做长稳测量 |
-| GitHub 推送 | 本机无 `gh`、无 GitHub 令牌 |
+| Gitee 镜像 | 令牌无建仓权限（API 403），需在网页建空仓库后手动推送 |
 | CI 门禁 | 目前以本地构建为准 |
 | 应用内更新内核版本 | 需与运行时包版本号联动 |
 
@@ -151,7 +151,7 @@ unless stated otherwise.
 ### Planned
 
 Fully automatic first install; in-app rollback button; incremental install (skip existing files);
-on-demand single-kernel start + idle reclaim; GitHub push (no `gh`/token on this machine); CI gate;
+on-demand single-kernel start + idle reclaim; Gitee mirror (token lacks repo-creation scope); CI gate;
 in-app kernel version updates.
 
 ## Build
