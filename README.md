@@ -74,6 +74,14 @@ C:\rc\gradlew.bat -p C:\rc :app:assembleDebug
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 60 MB，含两个运行时二进制与标准库）。
 
+arm64 运行时产物（尚未接入 APK，见上表 EXPERIMENTAL）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-runtime-arm64.ps1
+# 输出：.tmp\arm64-jniLibs\arm64-v8a\（14 个 .so / 99.8 MB，ELF AArch64）
+#       .tmp\arm64-assets\（python-stdlib.zip、runtime-libs）
+```
+
 ## 许可
 
 本仓库代码以 MIT 发布，见 [LICENSE](LICENSE)。随附的运行时、原生库、Python 与 Node 依赖
