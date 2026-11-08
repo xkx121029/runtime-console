@@ -4,9 +4,25 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/**
+ * 把仓库根目录的 LICENSE 与 THIRD_PARTY_NOTICES.md 作为 assets 打进 APK。
+ *
+ * 目的：App 内的「开源许可」页必须能在**离线、无网络**的情况下打开并复制全文，
+ * 不能依赖运行时去读仓库文件（设备上没有仓库）。两份文件是唯一的事实来源，
+ * 这里只做改名复制，不生成第二份副本。
+ */
+val licenseAssets = layout.buildDirectory.dir("generated/licenseAssets")
+val copyLicenseAssets = tasks.register<Copy>("copyLicenseAssets") {
+    from(rootProject.file("LICENSE")) { rename { "LICENSE.txt" } }
+    from(rootProject.file("THIRD_PARTY_NOTICES.md")) { rename { "THIRD_PARTY_NOTICES.txt" } }
+    into(licenseAssets.map { it.dir("licenses") })
+}
+
 android {
     namespace = "dev.runtimeconsole.app"
     compileSdk = 36
+
+    sourceSets["main"].assets.srcDir(licenseAssets)
 
     defaultConfig {
         applicationId = "dev.runtimeconsole.app"
@@ -37,6 +53,9 @@ android {
         jvmTarget = "17"
     }
 }
+
+// assets 目录由上面的 Copy 任务生成，构建前必须先跑，否则许可页读到空文件
+tasks.named("preBuild") { dependsOn(copyLicenseAssets) }
 
 dependencies {
     implementation(project(":core"))

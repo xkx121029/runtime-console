@@ -163,6 +163,7 @@ fun RuntimeConsoleApp(
     packMessage: String? = null,
     onImportPack: () -> Unit = {},
     onDismissPackMessage: () -> Unit = {},
+    onOpenLicenses: () -> Unit = {},
 ) {
     var logTarget by remember { mutableStateOf<KernelId?>(null) }
     var logText by remember { mutableStateOf("") }
@@ -217,6 +218,14 @@ fun RuntimeConsoleApp(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                item {
+                    TextButton(onClick = onOpenLicenses, contentPadding = PaddingValues(0.dp)) {
+                        Text(
+                            text = "开源许可 · MIT 与第三方组件",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
             }
         }

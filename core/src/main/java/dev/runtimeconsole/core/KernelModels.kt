@@ -23,8 +23,8 @@ enum class KernelId(
     /** 日志文件名，落在 `filesDir/logs/`。 */
     val logName: String,
 ) {
-    DSH_WEB("dsh 控制台", "Node / TS 内核 · Web 控制台", 3080, "/", "dsh-web.log"),
-    OCTOP_API("Octop API", "Python / FastAPI 内核 · 管理接口", 18080, "/api/setup/status", "octop-api.log");
+    DSH_WEB("Web 控制台", "Node / TypeScript 内核 · Web 控制台", 3080, "/", "dsh-web.log"),
+    OCTOP_API("管理接口", "Python / FastAPI 内核 · 管理接口", 18080, "/api/setup/status", "octop-api.log");
 
     val baseUrl: String get() = "http://127.0.0.1:$port"
     val healthUrl: String get() = baseUrl + healthPath

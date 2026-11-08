@@ -185,6 +185,9 @@ class MainActivity : ComponentActivity() {
                 packMessage = packMessage.value,
                 onImportPack = { pickPackDirectory.launch(null) },
                 onDismissPackMessage = { packMessage.value = null },
+                onOpenLicenses = {
+                    startActivity(Intent(this@MainActivity, LicensesActivity::class.java))
+                },
             )
         }
 
