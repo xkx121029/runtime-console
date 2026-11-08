@@ -6,8 +6,14 @@
 
     产物默认落在 .tmp\arm64-jniLibs\arm64-v8a 与 .tmp\arm64-assets，
     **不写进 runtime-host/src/main/**：当前 APK 的 assets/python-stdlib.zip 含
-    lib-dynload/*.so（架构相关），x86_64 与 arm64 不能共用同一份 assets，
-    接进 Gradle 需要按 ABI 拆 flavor/splits，尚未实现（见 docs/STATE.md T-04）。
+    lib-dynload 下架构相关的动态库，x86_64 与 arm64 不能共用同一份 assets。
+    接入方式是 Gradle 属性整套替换（runtime-host/build.gradle.kts）：
+
+      gradlew :app:assembleDebug -PruntimeAbi=arm64-v8a `
+          -PruntimeAssetsDir=<repo>\.tmp\arm64-assets `
+          -PruntimeJniLibsDir=<repo>\.tmp\arm64-jniLibs
+
+    真机未验证（docs/STATE.md T-04）。
 
     用法：
       powershell -ExecutionPolicy Bypass -File scripts\build-runtime-arm64.ps1
@@ -34,8 +40,16 @@ if (-not (Test-Path $index)) {
 }
 
 # 1) 依赖闭包 + 下载
+#    Roots 与 x86_64 保持同一份清单：node/python 本体之外，管理接口内核的原生扩展
+#    （lxml / Pillow / tiktoken）需要的 Termux 原生库也要一起取，否则 arm64 包能装但
+#    Octop 起不来。缺哪个包 fetch 会打 MISS，不会中断。
+$roots = @(
+    "nodejs", "python",
+    "libxml2", "libxslt", "libtiff", "libjpeg-turbo", "openjpeg", "libimagequant",
+    "libxcb", "libxau", "libxdmcp", "libwebp", "libiconv"
+)
 powershell -ExecutionPolicy Bypass -File "scripts\fetch-termux.ps1" `
-    -Index $index -OutDir $indexDir -BaseUrl $BaseUrl
+    -Index $index -OutDir $indexDir -BaseUrl $BaseUrl -Roots $roots
 
 # 2) 解包
 powershell -ExecutionPolicy Bypass -File "scripts\extract-termux-debs.ps1" `
@@ -47,5 +61,19 @@ powershell -ExecutionPolicy Bypass -File "scripts\build-runtime.ps1" `
     -TermuxRoot (Join-Path $rootDir "data\data\com.termux\files\usr") `
     -JniLibs $JniLibs -Assets $Assets
 
+# 4) 与架构无关的静态 assets（内核启动脚本、自检脚本）
+#    Gradle 里 -PruntimeAssetsDir 是**整套替换** src/main/assets，不补这一步
+#    arm64 包会缺 launcher/selftest，内核启动直接找不到入口脚本。
+$staticAssets = Join-Path $repoRoot "runtime-host\src\main\assets"
+foreach ($dir in @("launcher", "selftest")) {
+    $src = Join-Path $staticAssets $dir
+    if (-not (Test-Path $src)) { Write-Output "WARN 静态 assets 缺失：$dir"; continue }
+    $dst = Join-Path $Assets $dir
+    if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+    Copy-Item $src $dst -Recurse -Force
+}
+Write-Output ("STAGE static-assets " + ((Get-ChildItem (Join-Path $Assets "launcher"),(Join-Path $Assets "selftest") -Recurse -File -ErrorAction SilentlyContinue).Count) + " files")
+
 Write-Output "ARM64-DONE jniLibs=$((Join-Path $JniLibs 'arm64-v8a')) assets=$Assets"
-Write-Output "注意：产物尚未接入 APK（需按 ABI 拆分 assets），真机未验证（T-04）"
+Write-Output "下一步：gradlew :app:assembleDebug -PruntimeAbi=arm64-v8a -PruntimeAssetsDir=$Assets -PruntimeJniLibsDir=$JniLibs"
+Write-Output "注意：真机未验证（T-04），本产物只证明构建链路可出包"

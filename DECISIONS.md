@@ -48,6 +48,13 @@
 | D-042 | dsh 启动命令固定带 `--expose-internals`，且必须注入 `TMPDIR` 指向 `filesDir/tmp` 并提前创建目录 | 前者是 P-01 的前提；后者修复 Termux Node 的 `os.tmpdir()` 默认指向 `/data/data/com.termux/files/usr/tmp` 导致 `spill-local` 插件失败 | 设备日志：`mkdtemp '/data/data/com.termux/files/usr/tmp/dsh-spill-XXXXXX'` → 注入后 0 告警 |
 | D-043 | pydantic-core 用 Rust + NDK 现场交叉编译（`x86_64-linux-android`），不用 Termux 包 | Termux 仓库无 `python-pydantic`；PyPI 无 android 轮子；pydantic 2.x 是 Octop 硬依赖 | 产物 `lib_pydantic_core.so` 6,093,592 bytes，3m01s |
 
+## 构建链（arm64 接入）
+
+| 编号 | 决策 | 理由 | 证据 / 影响面 |
+|---|---|---|---|
+| D-044 | ABI 切换用 Gradle 属性**整套替换** `src/main/assets` 与 `src/main/jniLibs`（`-PruntimeAssetsDir` / `-PruntimeJniLibsDir` / `-PruntimeAbi`），不做 flavor/splits | stdlib 里 `lib-dynload` 下是架构相关的动态库，x86_64 与 arm64 混装会得到"能装但内核起不来"的包；属性替换比 flavor 少一层变体矩阵，默认构建完全不变 | `runtime-host/build.gradle.kts`、`app/build.gradle.kts`；两向构建均 `BUILD SUCCESSFUL`，默认包仍为 `lib/x86_64` |
+| D-045 | `scripts/build-runtime-arm64.ps1` 末尾把与架构无关的 `launcher` / `selftest` 静态 assets 拷进 arm64 assets 目录 | Gradle 的 assets 替换是整目录覆盖，不补这步 arm64 包里没有内核启动脚本与自检脚本 | 修复前后解包对比：修复前 `assets/` 只有 `runtime-libs` 与 `python-stdlib.zip`；修复后 `assets/launcher/octop_serve.py`、`assets/selftest/hello.js|py` 齐全 |
+
 ## 环境事实（非决策，但影响后续）
 
 | 编号 | 事实 | 证据 |

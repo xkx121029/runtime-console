@@ -34,7 +34,7 @@
 
 | 能力 | 限制 |
 |---|---|
-| arm64 运行时产物 | 链路可出产物（14 个 `.so`、99.8 MB、ELF AArch64），但**未接入 APK**（`assets` 里的 `lib-dynload` 与架构相关，需按 ABI 拆包），**未真机验证** |
+| arm64 运行时产物 | **已能产出 arm64 APK**（`-PruntimeAbi=arm64-v8a` 整套替换 assets/jniLibs，解包核对 `lib/arm64-v8a` 14 个 `.so`、ELF AArch64、`assets` 齐全）；但**未上真机**，内核在 arm64 上能否启动未验证 |
 | 运行时包导入（SAF 选目录） | 格式与校验已完成；完整 dsh 树导入需约 40 分钟，导入后能否启动仍以实测为准 |
 | 运行时分包 HTTP 下载与 Range 断点续传 | 无公共分发服务器，需自建静态文件服务并保证支持 `Range`；服务端忽略 `Range` 时退化为整包重下 |
 | 首装导入吞吐 | 实测约 0.4–0.5 MB/s（约 20 文件/秒），完整 dsh 树约 40 分钟；瓶颈在海量小文件创建 |
@@ -74,12 +74,17 @@ C:\rc\gradlew.bat -p C:\rc :app:assembleDebug
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 60 MB，含两个运行时二进制与标准库）。
 
-arm64 运行时产物（尚未接入 APK，见上表 EXPERIMENTAL）：
+arm64 运行时产物（能出 APK，未上真机）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build-runtime-arm64.ps1
 # 输出：.tmp\arm64-jniLibs\arm64-v8a\（14 个 .so / 99.8 MB，ELF AArch64）
-#       .tmp\arm64-assets\（python-stdlib.zip、runtime-libs）
+#       .tmp\arm64-assets\（python-stdlib.zip、runtime-libs、launcher、selftest）
+
+.\gradlew.bat :app:assembleDebug -PruntimeAbi=arm64-v8a `
+    -PruntimeAssetsDir="<repo>\.tmp\arm64-assets" `
+    -PruntimeJniLibsDir="<repo>\.tmp\arm64-jniLibs"
+# 之后不传属性即为默认 x86_64 包，两套产物不共用
 ```
 
 ## 许可

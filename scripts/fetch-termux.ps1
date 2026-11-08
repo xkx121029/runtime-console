@@ -49,8 +49,12 @@ Write-Output ("RESOLVED-COUNT " + $resolved.Count + " TOTAL-MB " + [math]::Round
 foreach ($name in $resolved) {
     $file = $pkgTable[$name].File
     $want = $pkgTable[$name].Size
-    $deb = Join-Path $OutDir (Split-Path $file -Leaf)
-    $url = "$BaseUrl/$file"
+    # Termux 的 deb 文件名里有 epoch 冒号（openssl_1:3.6.5_aarch64.deb）：
+    # Test-Path 不接受含 ':' 的路径，直接落盘还会被写成 NTFS 备用数据流。
+    # 本地用 '_' 替换，URL 里用 %3A 编码。
+    $leaf = (Split-Path $file -Leaf) -replace ':', '_'
+    $deb = Join-Path $OutDir $leaf
+    $url = "$BaseUrl/" + ($file -replace ':', '%3A')
     for ($a = 1; $a -le $Attempts; $a++) {
         $have = if (Test-Path $deb) { (Get-Item $deb).Length } else { 0 }
         if ($have -ge $want -and $want -gt 0) { break }

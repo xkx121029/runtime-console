@@ -206,7 +206,12 @@ Write-Output ("DONE jniLibs {0:N1}MB -> {1}" -f ($total/1MB), $dst)
 $compat = @(
     "libandroid-posix-semaphore.so", "libbz2.so.1.0.8", "libexpat.so.1.13.1",
     "libgdbm.so", "libgdbm_compat.so", "liblzma.so.5.8.4", "libncursesw.so.6.5", "libpanelw.so.6.5",
-    "libreadline.so.8.3", "libzstd.so.1.5.7", "libz.so.1.4", "libcrypto.so.3", "libssl.so.3"
+    "libreadline.so.8.3", "libzstd.so.1.5.7", "libz.so.1.4", "libcrypto.so.3", "libssl.so.3",
+    # 管理接口内核（FastAPI/Octop）的原生扩展依赖：lxml、Pillow、tiktoken 等会 dlopen 这些库。
+    # 两个 ABI 都存在（fetch-termux.ps1 的 Roots 里同步列出），缺失时只告警不中断。
+    "libiconv.so", "libxml2.so.16.1.4", "libxslt.so", "libexslt.so", "libtiff.so",
+    "libjpeg.so.8.3.2", "libopenjp2.so", "libimagequant.so", "libxcb.so", "libXau.so",
+    "libXdmcp.so", "libwebp.so", "libwebpdemux.so", "libwebpmux.so", "libsharpyuv.so"
 )
 # 说明：libsqlite3.so / libffi.so / libandroid-support.so / libpython3.14.so 在 jniLibs 里已是同名，
 # 系统会直接从 nativeLibraryDir 找到，无需重复放进兼容目录。

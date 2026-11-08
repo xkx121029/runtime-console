@@ -30,6 +30,14 @@ android {
         targetSdk = 36
         versionCode = 2
         versionName = "0.2.0-m1"
+
+        ndk {
+            // ABI 由 Gradle 属性决定，默认 x86_64（仓库内已有产物）。
+            // 构建 arm64 时传 -PruntimeAbi=arm64-v8a，必须与 runtime-host 的
+            // -PruntimeAssetsDir / -PruntimeJniLibsDir 一起切换，否则会得到
+            // "能装但内核起不来"的混合包（stdlib 里的 lib-dynload 与架构相关）。
+            abiFilters += providers.gradleProperty("runtimeAbi").getOrElse("x86_64")
+        }
     }
 
     buildFeatures {

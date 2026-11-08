@@ -319,7 +319,8 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 5. PowerShell 5.1 读无 BOM 的 UTF-8 脚本会把中文当 ANSI 并破坏语法：`scripts/*.ps1` 必须带 BOM。
    新增脚本后执行：
    `[IO.File]::WriteAllText($p, [IO.File]::ReadAllText($p,[Text.Encoding]::UTF8), (New-Object Text.UTF8Encoding($true)))`
-6. Termux 包名含冒号（`openssl_1:3.6.5`），PowerShell 的 `Split-Path -Leaf` 会误判，需特殊处理。
+6. Termux 包名含冒号（`openssl_1:3.6.5`）：`Test-Path`/`Split-Path` 会误判，直接落盘还会写成
+   NTFS 备用数据流；`scripts/fetch-termux.ps1` 已统一改为本地文件名用 `_`、URL 用 `%3A`。
 7. `adb push` 目录遇符号链接报错，改用 `tar` 打包传输。
 8. 模拟器无 `curl`/`wget`，设备侧 HTTP 验证只能自写脚本自请求。
 9. 模拟器极慢（冷启动 20s+），不可用于性能结论。
@@ -339,6 +340,9 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
     必须用 `network_security_config.xml` 显式放行，否则探活永远返回 null。
 18. 模拟器冷启动极慢：Compose 首帧约 30~45 s，内核冷启动 95~110 s；
     探活/UI 轮询不要以"几秒内必须响应"为前提。
+19. Kotlin **支持嵌套块注释**：`build.gradle.kts` 的 KDoc 里写 `lib-dynload/*.so` 会打开一个嵌套
+    注释，把后面的 `dependencies` 与任务注册全吃掉。症状极具误导性——`Unresolved reference: core`、
+    `tasks.register` 的任务"不存在"、AGP 报 `does not specify compileSdk`。排查时直接看脚本尾部是否还有效。
 
 ## 技术债
 
@@ -347,7 +351,7 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 | T-01 | 上游补丁尚未产生 | M2 起每处改动出 `.patch` 并写 `docs/UPSTREAM.md` |
 | T-02 | 运行时二进制不入库（60.9MB APK、99.5MB lib） | 换机/清缓存后需重跑 `scripts/build-runtime.ps1` |
 | T-03 | 只能依赖 Termux 预编译包（非上游官方 Android 构建） | 需固化下载源与校验和 |
-| T-04 | 真机 arm64 未验 | 构建链路已打通（`scripts/build-runtime-arm64.ps1`），产物 14 个 `.so` / 99.8 MB / ELF AArch64；但未接入 APK（stdlib 的 `lib-dynload` 与架构相关，需按 ABI 拆包），无 arm64 真机 |
+| T-04 | 真机 arm64 未验 | **arm64 APK 已能产出**：`scripts/build-runtime-arm64.ps1` 生成产物，Gradle 用 `-PruntimeAbi/-PruntimeAssetsDir/-PruntimeJniLibsDir` 整套替换；解包核对 `lib/arm64-v8a` 14 个 `.so`（99.8 MB，`e_machine=0xB7`）、`assets/runtime-libs` 28 个、`launcher/selftest` 齐全，APK 63.7 MB。无 arm64 真机，运行期未验证 |
 | T-05 | `gradlew.bat` 在含 `&` 路径下不可用 | 用 `C:\rc` 联接绕过 |
 | T-06 | 兼容库靠 `sitecustomize.py` 预加载 | 若某扩展用 `ctypes.CDLL("libssl.so.3")` 名字也能命中；但进程内多份同名库会双份内存 |
 | T-07 | 首启解压 15.7MB stdlib 在主线程外的 IO 线程，但无进度条之外反馈 | 首次自检约 20~40s（模拟器） |
@@ -459,14 +463,33 @@ console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页�
 - 新增取证入口 `--ez runtime_webview true`：不依赖内核状态直接打开 WebView，
   用于复现错误页（此前只能等"进程刚好被回收"这种偶发条件）。
 
-### 4. arm64：链路打通到"能出产物"，真机仍未验证
+### 4. arm64：APK 已能产出，真机仍未验证
 
-- `scripts/build-runtime-arm64.ps1`：取 Termux `aarch64` 的 nodejs 26.13.0 / python 3.14.10
-  依赖闭包 → 解包 → 复用 `build-runtime.ps1 -Abi arm64-v8a`。
-- 产物：14 个 `.so` / 99.8 MB，`llvm-readelf` 校验 `Machine=AArch64`、`VERIFY-ELF OK`。
-- **未接入 APK**：`assets/python-stdlib.zip` 内 `lib-dynload/*.so` 是架构相关的，
-  x86_64 与 arm64 不能共用，需要按 ABI 拆 flavor/splits（下一轮）。
-- 无 arm64 真机：T-04 仍为"未验证"，不伪造。
+- 链路：`scripts/build-runtime-arm64.ps1` 取 Termux `aarch64` 的 nodejs 26.13.0 / python 3.14.10
+  依赖闭包 → 解包 → 复用 `build-runtime.ps1 -Abi arm64-v8a` → 拷 `launcher`/`selftest`
+  两个与架构无关的静态 assets。
+- 接入方式：`runtime-host/build.gradle.kts` 读 `-PruntimeAssetsDir` / `-PruntimeJniLibsDir`，
+  命中时**整套替换** `src/main/assets` 与 `src/main/jniLibs`；`app` 的 `abiFilters` 读
+  `-PruntimeAbi`（默认 `x86_64`）。两套产物不能混：stdlib 里 `lib-dynload` 下的动态库是架构相关的。
+- 命令：
+  ```
+  gradlew :app:assembleDebug -PruntimeAbi=arm64-v8a \
+      -PruntimeAssetsDir=<repo>\.tmp\arm64-assets \
+      -PruntimeJniLibsDir=<repo>\.tmp\arm64-jniLibs
+  ```
+- 解包核对（arm64 APK 63,734,464 B）：`lib/arm64-v8a` 14 个 `.so` / 99.8 MB，
+  逐个读 ELF 头全部 `e_machine=0xB7`（AArch64）；`assets/runtime-libs` 28 个（与 x86_64 同清单，
+  补了 lxml/Pillow/tiktoken 需要的 libxml2、libxslt、libtiff、libjpeg、libwebp、libxcb 等）；
+  `assets/launcher`、`assets/selftest` 齐全；`extractNativeLibs=true`。
+- 未改默认构建：不传属性时仍产出 x86_64 包（`lib/x86_64` 15 项 / 99.5 MB），已回归验证。
+- 未验证的部分（不伪造）：没有 arm64 真机，内核能否在这套产物上起来、Octop 的原生扩展能否加载，
+  **均未测**。T-04 保持"未验证"。
+- 两个真实故障（已修，见 `DECISIONS.md` D-044/D-045 与「已知坑」6/19）：
+  ①`build.gradle.kts` 的 KDoc 里写了 `lib-dynload/*.so`，Kotlin 支持嵌套块注释，
+     `/*` 让后面的 `dependencies`/任务注册全部变成注释 → 编译报 `Unresolved reference: core`，
+     且 `tasks.register` 不生效（表现为"任务不存在"）；
+  ②Termux deb 文件名带 epoch 冒号，`Test-Path` 直接报"不支持给定路径的格式"，
+     还会把文件写成 NTFS 备用数据流 → fetch 脚本改为本地 `_`、URL `%3A`。
 
 ### 5. 合规与发布面
 
@@ -497,9 +520,9 @@ console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页�
 
 ### 本轮遗留 / 下一轮接手点
 
-1. arm64 接入 APK：按 ABI 拆 `assets`（或把 `lib-dynload` 改放 jniLibs 并注入 `sys.path`）。
+1. arm64 真机验证：包能产出、内容已核对，但没有任何运行期证据（T-04）。
 2. 导入吞吐：`tar + rename` 方案（需内核侧配合改 `NODE_PATH`），目标 20 分钟 → 3 分钟内。
 3. 运行时包增量更新与回滚（保留上一版本目录 + 版本号切换）。
 4. 分发服务器：对象存储 + 分卷 + 校验清单；否则 HTTP 导入只能留在 EXPERIMENTAL。
-5. 真机验证（arm64、4 GB 内存机型），届时再评估是否需要空闲回收。
+5. 真机验证（4 GB 内存机型），届时再评估是否需要空闲回收。
 
