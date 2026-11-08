@@ -353,8 +353,8 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 | T-07 | 首启解压 15.7MB stdlib 在主线程外的 IO 线程，但无进度条之外反馈 | 首次自检约 20~40s（模拟器） |
 | T-08 | Octop `GET /` 冷启动时 20s 不返回（热态 1.4s/200） | dashboard 首次访问需预热，已降级为“等一会儿” |
 | T-09 | Octop 依赖安装目前只有手工 adb 步骤 | 换机不可复现，待写 `scripts/octop-runtime.ps1` |
-| T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 全新设备开箱不可用，必须决策分发方案 |
-| T-11 | Octop 首启向导提交后 WebView 空白 | 已定位为“内核随 App 进程被回收”，加前台保活（M6）后待复测 |
+| T-10 | `python-site` 803MB 与 dsh `node_modules` 701MB 未进 APK | 已给出运行时分包方案并落地（`docs/DISTRIBUTION.md`）；导入吞吐仅约 0.4 MB/s，完整 dsh 树约 40 分钟 |
+| T-11 | Octop 首启向导提交后 WebView 空白 | **已复测通过**：向导 → 登录 → 主界面完整渲染（`docs/evidence/t11-main-ui-3.png`）；空白成因是内核随进程被回收 + 首帧慢 |
 
 ## 验证环境
 
@@ -365,3 +365,46 @@ netstat -ltn: 127.0.0.1:3080, 127.0.0.1:18080
 | JDK | `C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot`（21.0.12.1） |
 | Gradle / AGP / Kotlin | 8.14.2 / 8.13.2 / 2.2.21 |
 | SDK | platforms 33–36，NDK 26.1/27.0/28.2，CMake 3.22.1 |
+
+## 2026-11-08 第二轮：首装分发 / T-11 复测 / WebView 健壮性
+
+### T-10 首装分发：方案已落地，全自动未达成
+
+- 新增「运行时包（runtime pack）」：manifest.json（schema=1）+ 分卷 zip + 整体 SHA-256。
+  安装器把内容解到 `<target>.staging` 再原子替换，校验失败时旧目录不动；拒绝 `..`/绝对路径。
+  代码：`runtime-host/.../RuntimePack.kt`、`RuntimePackDownloader.kt`（HTTP Range 续传，EXPERIMENTAL）。
+- App 内首装引导：「运行时组件」卡片显示两个组件缺失/就绪，点「导入运行时包」走 SAF 选目录，
+  进度显示 `校验 x%` / `解压（N 项）x%`。取证入口：`--es runtime_pack_dir <路径>`、
+  `--es runtime_pack_url <URL前缀>`。
+- PC 侧 `scripts/pack-runtime.ps1`：dsh 树 7 万文件用 Fastest 压缩 → **234,550,743 B**，约 3 分钟。
+  `adb push` 234 MB 实测 **53 s（4.1 MB/s）**。
+- 设备端解包吞吐实测 **0.4–0.5 MB/s**（约 20 文件/秒），完整 dsh 树（约 1.1 GB）40 分钟量级。
+  同设备顺序写 100 MB/s，瓶颈在"海量小文件逐条创建"，不在解压算法。
+  已尝试的优化：复用 128KB 拷贝缓冲（避免每条目新分配，属于真实缺陷，已修）。
+- 完整步骤、包格式、限制见 `docs/DISTRIBUTION.md`。
+- **未完成**：一键全自动安装（无公共分发服务器）、增量/回滚、arm64 包。
+
+### T-11 复测：通过
+
+同一 App 进程、前台保活开启，路径实测：
+Octop 向导（密码页）→ 提交错误密码时页面内联报错（不再空白）→
+用 API 完成初始化（`/api/setup/database` → `/api/setup/initial-admin` → `/api/setup/finish`）→
+重新打开 WebView → 登录页完整渲染 → 滑块验证 + 登录 → **主界面渲染（"还没有专家"空态）**。
+证据：`docs/evidence/t11-after-setup.png`、`t11-slider.png`、`t11-main-ui-3.png`。
+
+结论：此前的空白不是后端 500，也不是 WebView 配置问题，而是
+①App 进程被回收导致内核消失（M6 已修）；
+②冷启动首帧 + `/api/auth/status` 往返在模拟器上要几十秒，期间页面就是空白。
+本次补的顶部进度条让"在加载"可见。
+
+### WebView 健壮性
+
+`KernelWebViewActivity` 现在有：顶部加载进度、主框架失败/5xx 错误页（说明内核可能未就绪 + 重试）、
+console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页面。
+
+### 下一步（接手点）
+
+1. 等导入跑完后，用导入出的树重启 dsh，确认导入产物可执行（当前设备上 dsh 树已被移走做验证）。
+2. 长稳/内存：两个内核 + WebView 同时在线的峰值与 LMK 记录。
+3. arm64 产物链路。
+4. 合规发布面（LICENSE / THIRD_PARTY_NOTICES / 许可页 / 去品牌化 / README 三档标注）。
