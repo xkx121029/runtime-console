@@ -239,8 +239,7 @@ class RuntimePackInstaller(private val context: Context) {
                         // zip 规范用 "/"，但 .NET Framework / 部分打包工具写的是 "\"。
                         // Linux 把 "\" 当普通字符，会把整棵目录树写成一堆扁平文件（实测 dsh 无法启动），
                         // 所以这里统一归一化，旧包也不会白导入。
-                        val entryName = entry.name.replace('\\', '/').trimStart('/')
-                        if (entryName.isEmpty()) continue
+                        val entryName = normalizeEntryName(entry.name) ?: continue
                         val outFile = File(staging, entryName)
                         if (!outFile.canonicalPath.startsWith(staging.canonicalPath + File.separator)) {
                             throw IllegalStateException("包内路径非法：${entry.name}")
@@ -334,4 +333,16 @@ class RuntimePackInstaller(private val context: Context) {
             else -> "$bytes B"
         }
     }
+}
+
+/**
+ * 把 zip 条目名归一化成相对路径。
+ *
+ * zip 规范用 "/"，但 .NET Framework 的 `ZipFile.CreateFromDirectory` 写的是 "\"。
+ * Linux 把 "\" 当普通字符，直接落盘会把整棵目录树压成一层扁平文件
+ * （实测 69k 个条目全在根目录，dsh 启动即失败）。空名返回 null（跳过）。
+ */
+internal fun normalizeEntryName(raw: String): String? {
+    val name = raw.replace('\\', '/').trimStart('/')
+    return name.ifEmpty { null }
 }

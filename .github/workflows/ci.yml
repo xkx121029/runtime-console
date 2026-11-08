@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: 构建 + 单元测试
+        run: ./gradlew :app:assembleDebug :runtime-host:testDebugUnitTest --console=plain
+
+      - name: 补丁可应用性
+        run: |
+          # node_modules 被 .gitignore 忽略，直接 git apply 会静默跳过；
+          # 复制目标文件到仓库外再检查。
+          if [ -d .tmp/dsh-npm/node_modules ]; then
+            for p in $(find patches -name '*.patch'); do
+              tmp=$(mktemp -d)
+              for rel in $(grep '^+++ b/' "$p" | sed 's|^+++ b/||'); do
+                src=".tmp/dsh-npm/$rel"
+                [ -f "$src" ] || continue
+                mkdir -p "$tmp/$(dirname "$rel")"
+                cp "$src" "$tmp/$rel"
+              done
+              if git -C "$tmp" apply --check -p1 "$PWD/$p" 2>/dev/null; then
+                echo "APPLY-OK $p（未应用，可干净应用）"
+              elif git -C "$tmp" apply --check -R -p1 "$PWD/$p" 2>/dev/null; then
+                echo "APPLY-OK $p（已应用，反向可还原）"
+              else
+                echo "APPLY-FAIL $p"; rm -rf "$tmp"; exit 1
+              fi
+              rm -rf "$tmp"
+            done
+          else
+            echo "SKIP: 无 .tmp/dsh-npm/node_modules"
+          fi
