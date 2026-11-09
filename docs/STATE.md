@@ -592,3 +592,13 @@ console 转 logcat（`WebViewConsole`）、返回键先退网页历史再关页�
 4. Gitee 镜像：网页建好空仓库后 `git remote add gitee <url> && git push -u gitee main`。
 5. 分发服务器仍无（HTTP 导入 EXPERIMENTAL）。
 
+## 2026-11-09：arm64 release 构建复核
+
+- 构建前 `gradlew --status` 正常；JDK 21；沿用现成 `.tmp/arm64-assets` 与 `.tmp/arm64-jniLibs`，没有重下依赖。
+- `:app:assembleRelease -PruntimeAbi=arm64-v8a -PruntimeAssetsDir=C:\rc\.tmp\arm64-assets -PruntimeJniLibsDir=C:\rc\.tmp\arm64-jniLibs`：**BUILD SUCCESSFUL，2m12s**。
+- 产物：`app/build/outputs/apk/release/app-release.apk`，56,788,624 B；SHA-256 `72338404d0d0081a670817a21ab832d6c6a87ba708f368d432a91b483cd83a48`。
+- 解包核验：仅 `lib/arm64-v8a`，15 个 `.so` 全部 `e_machine=0xB7`（AArch64）；`assets/runtime-libs` 28 项，`python-stdlib.zip`、launcher/selftest、许可文件齐全。
+- `aapt` 回读：versionCode 2、versionName `0.2.0-m1`、`native-code: arm64-v8a`。
+- `apksigner`：v2 签名验证通过；因没有 `keystore.properties`，证书为 **Android Debug**，本包仅可自测，不能作为正式发布件。
+- `adb devices -l` 无连接设备，因此本轮仍**没有 arm64 真机运行证据**；T-04 继续标为未验证，不宣称内核已通过运行测试。
+
